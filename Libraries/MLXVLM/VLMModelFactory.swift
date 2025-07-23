@@ -86,6 +86,7 @@ public class VLMTypeRegistry: ModelTypeRegistry, @unchecked Sendable {
             "qwen2_5_vl": create(Qwen25VLConfiguration.self, Qwen25VL.init),
             "idefics3": create(Idefics3Configuration.self, Idefics3.init),
             "gemma3": create(Gemma3Configuration.self, Gemma3.init),
+            "gemma3n": create(Gemma3nConfiguration.self, Gemma3n.init),
             "smolvlm": create(SmolVLM2Configuration.self, SmolVLM2.init),
         ]
     }
@@ -111,6 +112,8 @@ public class VLMProcessorTypeRegistry: ProcessorTypeRegistry, @unchecked Sendabl
                 Idefics3ProcessorConfiguration.self, Idefics3Processor.init),
             "Gemma3Processor": create(
                 Gemma3ProcessorConfiguration.self, Gemma3Processor.init),
+            "Gemma3nProcessor": create(
+                Gemma3nProcessorConfiguration.self, Gemma3nProcessor.init),
             "SmolVLMProcessor": create(
                 SmolVLMProcessorConfiguration.self, SmolVLMProcessor.init),
         ]

@@ -173,6 +173,7 @@ of language models, from LLMs to VLMs:
   - **Direct JSON Mapping**: Use `config.json` values directly through Swift `Codable` protocol, mirroring the structure from Python config.py dataclasses
   - Only provide fallback values (`private let _propertyName: Type?` with computed properties) when specific model variants are missing certain fields in their JSON config files, not for general default value handling
   - Focus on essential runtime parameters rather than complex nested configurations
+  - Use `config.summary.json` to understand the configuration structure, as it provides a concise overview. Avoid reading the full `config.json` due to its large size.
 
 ### To-Do Management
   - Keep an up-to-date `todo.md` to track progress and outstanding tasks.
@@ -511,13 +512,18 @@ public class MyModel: Module, UnaryLayer {
 
 **Swift Usage:**
 ```swift
-@ModuleInfo var rope: RoPE = RoPE(
+let var rope: RoPE = RoPE(
     dimensions: 64,
     traditional: false,
     base: 10000,
     scale: 1.0
 )
 ```
+> **Note:**  
+> Positional encoding layers (such as RoPE) do not contain trainable parameters (weights), so you do **not** need to use `@ModuleInfo` in Swift. Simply create and use them directly.
+> RMSNoScale does not contain learnable parameters, so you do **not** need to use `@ModuleInfo`. 
+
+
 
 ## Activation Functions
 
