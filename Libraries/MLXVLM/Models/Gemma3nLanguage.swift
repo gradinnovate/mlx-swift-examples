@@ -59,7 +59,7 @@ private class RMSNoScale: Module {
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        return MLXFast.rmsNorm(x, weight: nil, eps: eps)
+        return MLXFast.rmsNorm(x, weight: MLXArray.ones([x.dim(-1)]), eps: eps)
     }
 }
 
@@ -164,8 +164,8 @@ private class Gemma3nAttention: Module {
         if isKVSharedLayer && cache != nil {
             // For shared layers, retrieve KV from the designated cache layer
             let state = cache!.state
-            keys = state.0
-            values = state.1
+            keys = state[0]
+            values = state[1]
             offset = cache!.offset
         } else {
             if let cache = cache {
@@ -182,7 +182,7 @@ private class Gemma3nAttention: Module {
             values = values.transposed(0, 2, 1, 3)
             
             if let cache = cache {
-                let updated = cache.updateAndFetch(keys: keys, values: values)
+                let updated = cache.update(keys: keys, values: values)
                 keys = updated.0
                 values = updated.1
             }
@@ -422,9 +422,8 @@ private class Gemma3nDecoderLayer: Module {
             dimensions: hiddenSize, eps: config.rmsNormEps
         )
         
-        self.isSliding = selfAttn.isSliding
+        self.isSliding = self._selfAttn.wrappedValue.isSliding
         self.slidingWindow = config.slidingWindow
-        
         self.altup = Gemma3nAltUp(config: config)
         self.laurel = Gemma3nLaurelBlock(config: config)
         
@@ -437,6 +436,10 @@ private class Gemma3nDecoderLayer: Module {
         self._postPerLayerInputNorm.wrappedValue = RMSNorm(
             dimensions: hiddenSize, eps: config.rmsNormEps
         )
+        super.init()
+        
+        
+        
     }
     
     func callAsFunction(
@@ -521,11 +524,13 @@ private class Gemma3Model: Module {
             dimensions: hiddenSize
         )
         
+        // Capture values to avoid self capture in closure
+        let localFirstKVSharedLayerIdx = self.firstKVSharedLayerIdx
         self._layers.wrappedValue = (0..<numHiddenLayers).map { layerIdx in
             Gemma3nDecoderLayer(
                 config: config,
                 layerIdx: layerIdx,
-                isKVSharedLayer: layerIdx >= firstKVSharedLayerIdx
+                isKVSharedLayer: layerIdx >= localFirstKVSharedLayerIdx
             )
         }
         
@@ -545,12 +550,14 @@ private class Gemma3Model: Module {
             eps: config.rmsNormEps
         )
         
+        // Capture hiddenSize to avoid self capture in closure
+        let localHiddenSize = self.hiddenSize
         self._altupProjections.wrappedValue = (1..<config.altupNumInputs).map { _ in
-            Linear(hiddenSize, hiddenSize, bias: false)
+            Linear(localHiddenSize, localHiddenSize, bias: false)
         }
         
         self._altupUnembedProjections.wrappedValue = (1..<config.altupNumInputs).map { _ in
-            Linear(hiddenSize, hiddenSize, bias: false)
+            Linear(localHiddenSize, localHiddenSize, bias: false)
         }
         
         self.norm = RMSNorm(dimensions: hiddenSize, eps: config.rmsNormEps)
@@ -578,11 +585,13 @@ private class Gemma3Model: Module {
             }
         }
         self.layerIdxToCacheIdx = layerIdxToCacheIdx
+        
+        super.init()
     }
     
     func getPerLayerInputs(_ inputIds: MLXArray) -> MLXArray {
         let perLayerInputsMask = less(inputIds, MLXArray(vocabSizePerLayerInput))
-        let tokens = where(perLayerInputsMask, inputIds, zeros(like: inputIds))
+        let tokens = MLX.where(perLayerInputsMask, inputIds, zeros(like: inputIds))
         let result = embedTokensPerLayer(tokens) * sqrt(Float(hiddenSizePerLayerInput))
         return result.reshaped(
             inputIds.shape + [numHiddenLayers, hiddenSizePerLayerInput]
@@ -623,8 +632,8 @@ private class Gemma3Model: Module {
             actualPerLayerInputs = getPerLayerInputs(inputs)
         }
         
-        if let actualPerLayerInputs = actualPerLayerInputs {
-            actualPerLayerInputs = projectPerLayerInputs(h, actualPerLayerInputs)
+        if let perLayerInputsValue = actualPerLayerInputs {
+            actualPerLayerInputs = projectPerLayerInputs(h, perLayerInputsValue)
         }
         
         let cache = cache ?? Array(repeating: nil as KVCache?, count: layers.count)
@@ -694,7 +703,7 @@ private class Gemma3Model: Module {
 // MARK: - Language Model
 
 public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
-    @ModuleInfo var model: Gemma3Model
+    @ModuleInfo(key: "model") private var model: Gemma3Model
     
     public let config: Gemma3nTextConfiguration
     public var kvHeads: [Int]
@@ -702,9 +711,10 @@ public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
     
     public init(_ config: Gemma3nTextConfiguration) {
         self.config = config
-        self.model = Gemma3Model(config)
         self.finalLogitSoftcapping = config.finalLogitSoftcapping
         self.kvHeads = Array(repeating: config.numKeyValueHeads, count: config.numHiddenLayers)
+        super.init()
+        self.model = Gemma3Model(config)
     }
     
     public func newCache(parameters: GenerateParameters?) -> [any KVCache] {
@@ -774,5 +784,5 @@ private func createAttentionMask(h: MLXArray, cache: [KVCache]) -> MLXArray? {
 
 private func createCausalMask(_ seqLength: Int) -> MLXArray {
     let mask = tril(ones([seqLength, seqLength])) 
-    return where(equal(mask, 0), MLXArray(Float.infinity * -1), MLXArray(0))
+    return MLX.where(equal(mask, 0), MLXArray(Float.infinity * -1), MLXArray(0))
 }
