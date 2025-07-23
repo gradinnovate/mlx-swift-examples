@@ -16,7 +16,7 @@ public class Gemma3nRMSNorm: Module {
     let scaleShift: Float
     let withScale: Bool
     
-    @ParameterInfo var weight: MLXArray?
+    @ParameterInfo(key: "weight") var weight: MLXArray?
     
     public init(
         dimensions: Int,
@@ -28,7 +28,7 @@ public class Gemma3nRMSNorm: Module {
         self.eps = eps
         self.scaleShift = scaleShift
         self.withScale = withScale
-        
+        super.init()
         if withScale {
             self.weight = ones([dimensions])
         } else {
@@ -291,7 +291,7 @@ private class MLP: Module {
 // MARK: - AltUp (Alternating Updates)
 
 private class Gemma3nAltUp: Module {
-    @ParameterInfo var correctOutputScale: MLXArray
+    @ParameterInfo(key: "correct_output_scale") var correctOutputScale: MLXArray
     @ModuleInfo(key: "correction_coefs") var correctionCoefs: Linear
     @ModuleInfo(key: "prediction_coefs") var predictionCoefs: Linear
     @ModuleInfo(key: "modality_router") var modalityRouter: Linear
@@ -302,7 +302,7 @@ private class Gemma3nAltUp: Module {
     init(config: Gemma3nTextConfiguration) {
         self.config = config
         
-        self.correctOutputScale = zeros([config.hiddenSize])
+        self._correctOutputScale.wrappedValue = zeros([config.hiddenSize])
         
         self._correctionCoefs.wrappedValue = Linear(
             config.altupNumInputs, config.altupNumInputs, bias: false
@@ -380,13 +380,13 @@ private class Gemma3nAltUp: Module {
 
 private class Gemma3nDecoderLayer: Module {
     @ModuleInfo(key: "self_attn") var selfAttn: Gemma3nAttention
-    @ModuleInfo var mlp: MLP
+    @ModuleInfo(key: "mlp") var mlp: MLP
     @ModuleInfo(key: "input_layernorm") var inputLayernorm: RMSNorm
     @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayernorm: RMSNorm
     @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedforwardLayernorm: RMSNorm
     @ModuleInfo(key: "post_feedforward_layernorm") var postFeedforwardLayernorm: RMSNorm
-    @ModuleInfo var altup: Gemma3nAltUp
-    @ModuleInfo var laurel: Gemma3nLaurelBlock
+    @ModuleInfo(key: "altup") var altup: Gemma3nAltUp
+    @ModuleInfo(key: "laurel") var laurel: Gemma3nLaurelBlock
     @ModuleInfo(key: "per_layer_input_gate") var perLayerInputGate: Linear
     @ModuleInfo(key: "per_layer_projection") var perLayerProjection: Linear
     @ModuleInfo(key: "post_per_layer_input_norm") var postPerLayerInputNorm: RMSNorm
@@ -407,7 +407,7 @@ private class Gemma3nDecoderLayer: Module {
         self._selfAttn.wrappedValue = Gemma3nAttention(
             config: config, layerIdx: layerIdx, isKVSharedLayer: isKVSharedLayer
         )
-        self.mlp = MLP(config: config, layerIdx: layerIdx)
+        self._mlp.wrappedValue = MLP(config: config, layerIdx: layerIdx)
         
         self._inputLayernorm.wrappedValue = RMSNorm(
             dimensions: hiddenSize, eps: config.rmsNormEps
@@ -424,8 +424,8 @@ private class Gemma3nDecoderLayer: Module {
         
         self.isSliding = self._selfAttn.wrappedValue.isSliding
         self.slidingWindow = config.slidingWindow
-        self.altup = Gemma3nAltUp(config: config)
-        self.laurel = Gemma3nLaurelBlock(config: config)
+        self._altup.wrappedValue = Gemma3nAltUp(config: config)
+        self._laurel.wrappedValue = Gemma3nLaurelBlock(config: config)
         
         self._perLayerInputGate.wrappedValue = Linear(
             hiddenSize, hiddenSizePerLayerInput, bias: false
@@ -436,7 +436,7 @@ private class Gemma3nDecoderLayer: Module {
         self._postPerLayerInputNorm.wrappedValue = RMSNorm(
             dimensions: hiddenSize, eps: config.rmsNormEps
         )
-        super.init()
+        
         
         
         
@@ -491,13 +491,13 @@ private class Gemma3nDecoderLayer: Module {
 
 private class Gemma3Model: Module {
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
-    @ModuleInfo var layers: [Gemma3nDecoderLayer]
-    @ModuleInfo var norm: RMSNorm
+    @ModuleInfo(key: "layers") var layers: [Gemma3nDecoderLayer]
+    @ModuleInfo(key: "norm") var norm: RMSNorm
     @ModuleInfo(key: "embed_tokens_per_layer") var embedTokensPerLayer: Embedding
     @ModuleInfo(key: "per_layer_model_projection") var perLayerModelProjection: Linear
     @ModuleInfo(key: "per_layer_projection_norm") var perLayerProjectionNorm: RMSNorm
-    @ModuleInfo var altupProjections: [Linear]
-    @ModuleInfo var altupUnembedProjections: [Linear]
+    @ModuleInfo(key: "altup_projections") var altupProjections: [Linear]
+    @ModuleInfo(key: "altup_unembed_projections") var altupUnembedProjections: [Linear]
     
     let config: Gemma3nTextConfiguration
     let hiddenSize: Int
@@ -560,7 +560,7 @@ private class Gemma3Model: Module {
             Linear(localHiddenSize, localHiddenSize, bias: false)
         }
         
-        self.norm = RMSNorm(dimensions: hiddenSize, eps: config.rmsNormEps)
+        self._norm.wrappedValue = RMSNorm(dimensions: hiddenSize, eps: config.rmsNormEps)
         
         self.firstSlidingIdx = config.layerTypes.firstIndex(of: "sliding_attention") ?? 0
         self.firstFullIdx = config.layerTypes.firstIndex(of: "full_attention") ?? 0
