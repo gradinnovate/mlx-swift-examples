@@ -312,6 +312,41 @@ let result = x.sum(axis: 0, keepDims: true)
 - **Python**: `mx.float32`, `mx.int32`, `mx.bool_`
 - **Swift**: `.float32`, `.int32`, `.bool` (enum cases)
 
+### 5. Property Wrapper Initialization
+
+**Correct initialization pattern for @ModuleInfo and @ParameterInfo:**
+
+```swift
+public class MyLayer: Module {
+    @ModuleInfo var linear: Linear
+    @ParameterInfo(key: "weight") var weight: MLXArray
+    
+    public init() {
+        // Correct: Use wrappedValue for initialization
+        self._linear.wrappedValue = Linear(10, 20)
+        
+        super.init()
+        
+        // For @ParameterInfo with keys, initialize after super.init()
+        self._weight.wrappedValue = zeros([10])
+    }
+    
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
+        // Usage: Access directly (no wrappedValue needed)
+        return linear(x)
+    }
+}
+```
+
+**Why use `wrappedValue`:**
+- Ensures proper registration with MLX module system
+- Required for weight loading and parameter tracking
+- Direct assignment may bypass property wrapper logic
+
+**Timing:**
+- `@ModuleInfo` properties: Initialize before `super.init()`
+- `@ParameterInfo` with keys: Initialize after `super.init()`
+
 ## Common Patterns in Gemma3n Porting
 
 ### 1. Padding Operations
