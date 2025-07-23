@@ -39,14 +39,18 @@ private func makeDivisible(_ v: Int, divisor: Int = 8, minValue: Int? = nil, rou
 public class Gemma3nRMSNorm2d: Module {
     let normalizedShape: [Int]
     let eps: Float
+    let applyAct: Bool
     
-    @ParameterInfo var weight: MLXArray?
+    @ParameterInfo(key: "weight") var weight: MLXArray?
     
     public init(numChannels: Int, eps: Float = 1e-6, applyAct: Bool = true) {
         self.normalizedShape = [numChannels]
         self.eps = eps
+        self.applyAct = applyAct
         
-        self.weight = ones([numChannels])
+        super.init()
+        
+        self._weight.wrappedValue = ones([numChannels])
     }
     
     private func rmsNorm2d(
@@ -71,7 +75,16 @@ public class Gemma3nRMSNorm2d: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         // Convert from NHWC to NCHW for processing
         let xNCHW = x.transposed(0, 3, 1, 2)
-        let result = rmsNorm2d(xNCHW, normalizedShape: normalizedShape, weight: weight, eps: eps)
+        var result = rmsNorm2d(xNCHW, normalizedShape: normalizedShape, weight: weight, eps: eps)
+        
+        // Apply dropout (Identity in Python, so no-op)
+        // result = drop(result) // Identity in Python
+        
+        // Apply activation if specified
+        if applyAct {
+            result = gelu(result)
+        }
+        
         // Convert back to NHWC
         return result.transposed(0, 2, 3, 1)
     }
@@ -80,12 +93,12 @@ public class Gemma3nRMSNorm2d: Module {
 // MARK: - Layer Scale 2D
 
 private class LayerScale2d: Module {
-    @ParameterInfo var gamma: MLXArray
+    @ParameterInfo(key: "gamma") var gamma: MLXArray
     let inplace: Bool
     
     init(dim: Int, initValues: Float = 1e-5, inplace: Bool = false) {
         self.inplace = inplace
-        self.gamma = MLXArray(initValues) * ones([dim])
+        self._gamma.wrappedValue = MLXArray(initValues) * ones([dim])
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -116,35 +129,40 @@ private func padSame(
 ) -> MLXArray {
     let ih = x.shape[1]
     let iw = x.shape[2]
-    let padH = getSamePadding(ih, kernelSize: kernelSize[0], stride: stride[0], dilation: dilation[0])
-    let padW = getSamePadding(iw, kernelSize: kernelSize[1], stride: stride[1], dilation: dilation[1])
+    let padH = getSamePadding(inputSize: ih, kernelSize: kernelSize[0], stride: stride[0], dilation: dilation[0])
+    let padW = getSamePadding(inputSize: iw, kernelSize: kernelSize[1], stride: stride[1], dilation: dilation[1])
     
     // MLX pad format: [(low, high), (low, high), ...] for each axis
-    let padWidths = [
-        (0, 0),  // No padding for batch dimension
-        (padH / 2, padH - padH / 2),  // Height padding
-        (padW / 2, padW - padW / 2),  // Width padding
-        (0, 0),  // No padding for channel dimension
+    let padWidths: [IntOrPair] = [
+        IntOrPair((0, 0)),  // No padding for batch dimension
+        IntOrPair((padH / 2, padH - padH / 2)),  // Height padding
+        IntOrPair((padW / 2, padW - padW / 2)),  // Width padding
+        IntOrPair((0, 0)),  // No padding for channel dimension
     ]
     
-    return padded(x, widths: padWidths, mode: .constant, value: value)
+    return padded(x, widths: padWidths, mode: .constant, value: MLXArray(value))
 }
 
 // MARK: - Conv2d Same
 
 private class Conv2dSame: Conv2d {
-    let kernelSize: [Int]
+    let kernelSizeArray: [Int]
+    let strideArray: [Int]
+    let dilationArray: [Int]
     
     override init(
         inputChannels: Int,
         outputChannels: Int,
         kernelSize: IntOrPair,
-        stride: IntOrPair = IntOrPair(1),
-        padding: PaddingOrInt = PaddingOrInt(0),
-        dilation: IntOrPair = IntOrPair(1),
+        stride: IntOrPair = 1,
+        padding: IntOrPair = 0,
+        dilation: IntOrPair = 1,
         groups: Int = 1,
         bias: Bool = true
     ) {
+        self.kernelSizeArray = [kernelSize.first, kernelSize.second]
+        self.strideArray = [stride.first, stride.second]
+        self.dilationArray = [dilation.first, dilation.second]
         super.init(
             inputChannels: inputChannels,
             outputChannels: outputChannels,
@@ -156,11 +174,11 @@ private class Conv2dSame: Conv2d {
             bias: bias
         )
         
-        self.kernelSize = [kernelSize.first, kernelSize.second]
+        
     }
     
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let padded = padSame(x, kernelSize: kernelSize, stride: [stride.first, stride.second], dilation: [dilation.first, dilation.second])
+        let padded = padSame(x, kernelSize: kernelSizeArray, stride: strideArray, dilation: dilationArray)
         return super.callAsFunction(padded)
     }
 }
@@ -168,8 +186,8 @@ private class Conv2dSame: Conv2d {
 // MARK: - ConvNormAct
 
 private class ConvNormAct: Module {
-    @ModuleInfo var conv: Module
-    @ModuleInfo var bn: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "conv") var conv: Conv2d
+    @ModuleInfo(key: "bn") var bn: Gemma3nRMSNorm2d
     
     init(
         convCls: Any.Type,
@@ -190,7 +208,7 @@ private class ConvNormAct: Module {
                 outputChannels: outChs,
                 kernelSize: IntOrPair(kernelSize),
                 stride: IntOrPair(stride),
-                padding: PaddingOrInt(padding),
+                padding: IntOrPair(padding),
                 dilation: IntOrPair(dilation),
                 groups: groups,
                 bias: bias
@@ -201,14 +219,14 @@ private class ConvNormAct: Module {
                 outputChannels: outChs,
                 kernelSize: IntOrPair(kernelSize),
                 stride: IntOrPair(stride),
-                padding: PaddingOrInt(padding),
+                padding: IntOrPair(padding),
                 dilation: IntOrPair(dilation),
                 groups: groups,
                 bias: bias
             )
         }
         
-        self.bn = Gemma3nRMSNorm2d(numChannels: outChs, eps: eps, applyAct: applyAct)
+        self._bn.wrappedValue = Gemma3nRMSNorm2d(numChannels: outChs, eps: eps, applyAct: applyAct)
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -219,12 +237,12 @@ private class ConvNormAct: Module {
 
 // MARK: - Universal Inverted Residual
 
-private class UniversalInvertedResidual: Module {
-    @ModuleInfo var dwStart: Module?
-    @ModuleInfo var pwExp: ConvNormAct
-    @ModuleInfo var dwMid: Module?
-    @ModuleInfo var pwProj: ConvNormAct
-    @ModuleInfo var layerScale: Module?
+private class UniversalInvertedResidual: Module, UnaryLayer {
+    @ModuleInfo(key: "dw_start") var dwStart: ConvNormAct?
+    @ModuleInfo(key: "pw_exp") var pwExp: ConvNormAct
+    @ModuleInfo(key: "dw_mid") var dwMid: ConvNormAct?
+    @ModuleInfo(key: "pw_proj") var pwProj: ConvNormAct
+    @ModuleInfo(key: "layer_scale") var layerScale: LayerScale2d?
     
     let hasSkip: Bool
     
@@ -271,7 +289,7 @@ private class UniversalInvertedResidual: Module {
         }
         
         let midChs = makeDivisible(Int(Float(inChs) * expRatio))
-        self.pwExp = ConvNormAct(
+        self._pwExp.wrappedValue = ConvNormAct(
             convCls: Conv2d.self,
             inChs: inChs,
             outChs: midChs,
@@ -301,7 +319,7 @@ private class UniversalInvertedResidual: Module {
             self._dwMid.wrappedValue = nil
         }
         
-        self.pwProj = ConvNormAct(
+        self._pwProj.wrappedValue = ConvNormAct(
             convCls: Conv2d.self,
             inChs: midChs,
             outChs: outChs,
@@ -351,11 +369,11 @@ private class UniversalInvertedResidual: Module {
 
 // MARK: - Edge Residual
 
-private class EdgeResidual: Module {
-    @ModuleInfo var convExp: Conv2dSame
-    @ModuleInfo var bn1: Gemma3nRMSNorm2d
-    @ModuleInfo var convPwl: Conv2d
-    @ModuleInfo var bn2: Gemma3nRMSNorm2d
+private class EdgeResidual: Module, UnaryLayer {
+    @ModuleInfo(key: "conv_exp") var convExp: Conv2dSame
+    @ModuleInfo(key: "bn1") var bn1: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "conv_pwl") var convPwl: Conv2d
+    @ModuleInfo(key: "bn2") var bn2: Gemma3nRMSNorm2d
     
     let hasSkip: Bool
     
@@ -384,29 +402,29 @@ private class EdgeResidual: Module {
         
         self.hasSkip = (inChs == outChs && stride == 1) && !noskip
         
-        self.convExp = Conv2dSame(
+        self._convExp.wrappedValue = Conv2dSame(
             inputChannels: inChs,
             outputChannels: midChs,
             kernelSize: IntOrPair(expKernelSize),
             stride: IntOrPair(stride),
-            padding: PaddingOrInt(0),
+            padding: IntOrPair(0),
             dilation: IntOrPair(dilation),
             groups: groups,
             bias: false
         )
         
-        self.bn1 = Gemma3nRMSNorm2d(numChannels: midChs, eps: 1e-05)
+        self._bn1.wrappedValue = Gemma3nRMSNorm2d(numChannels: midChs, eps: 1e-05)
         
         let paddingPwl = (pwKernelSize - 1) / 2
-        self.convPwl = Conv2d(
+        self._convPwl.wrappedValue = Conv2d(
             inputChannels: midChs,
             outputChannels: outChs,
             kernelSize: IntOrPair(pwKernelSize),
-            padding: PaddingOrInt(paddingPwl),
+            padding: IntOrPair(paddingPwl),
             bias: false
         )
         
-        self.bn2 = Gemma3nRMSNorm2d(numChannels: outChs, eps: 1e-05, applyAct: false)
+        self._bn2.wrappedValue = Gemma3nRMSNorm2d(numChannels: outChs, eps: 1e-05, applyAct: false)
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -426,13 +444,198 @@ private class EdgeResidual: Module {
 
 // MARK: - Multi-Query Attention 2D
 
+private class QuerySequence: Module {
+    @ModuleInfo(key: "proj") var proj: Conv2d
+
+    //use create_conv2d interface in vision.py
+    init(
+        inputChannels: Int,
+        outputChannels: Int,
+        kernelSize: Int,
+        stride: Int = 1,
+        dilation: Int = 1,
+        depthwise: Bool = false,
+        bias: Bool = false
+    ) {
+        if depthwise {
+            let padding = Int((kernelSize - 1)/2) * dilation
+            self._proj.wrappedValue = Conv2d(
+                inputChannels: inputChannels,
+                outputChannels: outputChannels,
+                kernelSize: IntOrPair(kernelSize),
+                stride: IntOrPair(stride),
+                padding: IntOrPair(padding),
+                dilation: IntOrPair(dilation),
+                groups: inputChannels,
+                bias: bias
+            )
+        } else {
+            let padding = Int((kernelSize - 1)/2) * dilation
+            self._proj.wrappedValue = Conv2d(
+                inputChannels: inputChannels,
+                outputChannels: outputChannels,
+                kernelSize: IntOrPair(kernelSize),
+                stride: IntOrPair(stride),
+                padding: IntOrPair(padding),
+                dilation: IntOrPair(dilation),
+                bias: bias
+            )
+        }
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        return proj(x)
+    }
+}
+
+private class KeySequence: Module {
+    @ModuleInfo(key: "down_conv") var downConv: Conv2d?
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "proj") var proj: Conv2d
+
+    init(
+        inputChannels: Int,
+        numHeads: Int=8,
+        keyDim: Int=64,
+        valueDim: Int = 64,
+        kvStride: Int = 1,
+        dilation: Int = 1,
+        dwKernelSize: Int = 3,
+        numChannels: Int = 0,
+        eps: Float = 1e-6,
+        applyAct: Bool = false
+    ) {
+
+        if kvStride > 1 {
+            let padding = Int((dwKernelSize - 1)/2) * dilation
+            self._downConv.wrappedValue = Conv2d(
+                inputChannels: inputChannels,
+                outputChannels: inputChannels,
+                kernelSize: IntOrPair(dwKernelSize),
+                stride: IntOrPair(kvStride),
+                padding: IntOrPair(padding),
+                dilation: IntOrPair(dilation),  
+                groups: inputChannels,
+                bias: false
+            )
+        } else {
+            self._downConv.wrappedValue = nil
+        }
+        
+        self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: numChannels, eps: eps, applyAct: applyAct)
+        self._proj.wrappedValue = Conv2d(
+            inputChannels: inputChannels,
+            outputChannels: keyDim,
+            kernelSize: IntOrPair(1),
+            bias: false
+        )
+        
+        
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        var result = x
+        
+        if let downConv = downConv {
+            result = downConv(result)
+        }
+        
+        result = norm(result)
+        result = proj(result)
+        
+        return result
+    }
+}
+
+private class ValueSequence: Module {
+    @ModuleInfo(key: "down_conv") var downConv: Conv2d?
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "proj") var proj: Conv2d
+
+    init(
+        inputChannels: Int,
+        numHeads: Int = 8,
+        keyDim: Int = 64,
+        valueDim: Int = 64,
+        kvStride: Int = 1,
+        dilation: Int = 1,
+        dwKernelSize: Int = 3,
+        numChannels: Int = 0,
+        eps: Float = 1e-6,
+        applyAct: Bool = false
+    ) {
+        if kvStride > 1 {
+            let padding = Int((dwKernelSize - 1)/2) * dilation
+            self._downConv.wrappedValue = Conv2d(
+                inputChannels: inputChannels,
+                outputChannels: inputChannels,
+                kernelSize: IntOrPair(dwKernelSize),
+                stride: IntOrPair(kvStride),
+                padding: IntOrPair(padding),
+                dilation: IntOrPair(dilation),
+                groups: inputChannels,
+                bias: false
+            )
+        } else {
+            self._downConv.wrappedValue = nil
+        }
+        
+        self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: numChannels, eps: eps, applyAct: applyAct)
+        self._proj.wrappedValue = Conv2d(
+            inputChannels: inputChannels,
+            outputChannels: valueDim,
+            kernelSize: IntOrPair(1),
+            bias: false
+        )
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        var result = x
+        
+        if let downConv = downConv {
+            result = downConv(result)
+        }
+        
+        result = norm(result)
+        result = proj(result)
+        
+        return result
+    }
+}
+
+private class OutputSequence: Module {
+    @ModuleInfo(key: "proj") var proj: Conv2d
+    let projDrop: Dropout
+
+    init(
+        inputChannels: Int,
+        outputChannels: Int,
+        projDrop: Float = 0.0
+    ) {
+        self._proj.wrappedValue = Conv2d(
+            inputChannels: inputChannels,
+            outputChannels: outputChannels,
+            kernelSize: IntOrPair(1),
+            stride: IntOrPair(1),
+            bias: false
+        )
+        
+        self.projDrop = Dropout(p: projDrop)
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        var result = proj(x)
+        result = projDrop(result)
+        return result
+    }
+}
+
+
 private class MultiQueryAttention2d: Module {
-    @ModuleInfo var query: Conv2d
-    @ModuleInfo var key: Conv2d
-    @ModuleInfo var keyNorm: Gemma3nRMSNorm2d?
-    @ModuleInfo var value: Conv2d
-    @ModuleInfo var valueNorm: Gemma3nRMSNorm2d?
-    @ModuleInfo var output: Conv2d
+    @ModuleInfo(key: "query") var query: QuerySequence
+    @ModuleInfo(key: "key") var key: KeySequence
+    @ModuleInfo(key: "value") var value: ValueSequence
+    @ModuleInfo(key: "output") var output: OutputSequence
     
     let numHeads: Int
     let queryStrides: (Int, Int)
@@ -467,59 +670,45 @@ private class MultiQueryAttention2d: Module {
         self.scale = pow(Float(headDim), -0.5)
         
         // Query projection
-        self.query = Conv2d(
+        self._query.wrappedValue = QuerySequence(
             inputChannels: dim,
             outputChannels: numHeads * keyDim,
-            kernelSize: IntOrPair(1)
+            kernelSize: 1
         )
         
         // Key projection
-        if kvStride > 1 {
-            // For downsampling, we would need depthwise convolution + norm
-            // Simplified version for now
-            self.key = Conv2d(
-                inputChannels: dim,
-                outputChannels: keyDim,
-                kernelSize: IntOrPair(1),
-                bias: false
-            )
-            self.keyNorm = Gemma3nRMSNorm2d(numChannels: dim, eps: 1e-6, applyAct: false)
-        } else {
-            self.key = Conv2d(
-                inputChannels: dim,
-                outputChannels: keyDim,
-                kernelSize: IntOrPair(1),
-                bias: false
-            )
-            self.keyNorm = nil
-        }
+        self._key.wrappedValue = KeySequence(
+            inputChannels: dim,
+            numHeads: numHeads,
+            keyDim: keyDim,
+            valueDim: valueDim,
+            kvStride: kvStride,
+            dilation: dilation,
+            dwKernelSize: dwKernelSize,
+            numChannels: dim,
+            eps: 1e-6,
+            applyAct: false
+        )
         
         // Value projection
-        if kvStride > 1 {
-            self.value = Conv2d(
-                inputChannels: dim,
-                outputChannels: valueDim,
-                kernelSize: IntOrPair(1),
-                bias: false
-            )
-            self.valueNorm = Gemma3nRMSNorm2d(numChannels: dim, eps: 1e-6, applyAct: false)
-        } else {
-            self.value = Conv2d(
-                inputChannels: dim,
-                outputChannels: valueDim,
-                kernelSize: IntOrPair(1),
-                bias: false
-            )
-            self.valueNorm = nil
-        }
+        self._value.wrappedValue = ValueSequence(
+            inputChannels: dim,
+            numHeads: numHeads,
+            keyDim: keyDim,
+            valueDim: valueDim,
+            kvStride: kvStride,
+            dilation: dilation,
+            dwKernelSize: dwKernelSize,
+            numChannels: dim,
+            eps: 1e-6,
+            applyAct: false
+        )
         
         // Output projection
-        self.output = Conv2d(
+        self._output.wrappedValue = OutputSequence(
             inputChannels: valueDim * numHeads,
             outputChannels: dimOut,
-            kernelSize: IntOrPair(1),
-            stride: IntOrPair(1),
-            bias: false
+            projDrop: projDrop
         )
     }
     
@@ -544,16 +733,10 @@ private class MultiQueryAttention2d: Module {
         let q = query(x)
         let qReshaped = reshapeProjectedQuery(q, numHeads: numHeads, keyDim: keyDim)
         
-        var k = key(x)
-        if let keyNorm = keyNorm {
-            k = keyNorm(k)
-        }
+        let k = key(x)
         let kReshaped = reshapeInput(k)
         
-        var v = value(x)
-        if let valueNorm = valueNorm {
-            v = valueNorm(v)
-        }
+        let v = value(x)
         let vReshaped = reshapeInput(v)
         
         let o: MLXArray
@@ -562,7 +745,8 @@ private class MultiQueryAttention2d: Module {
                 queries: qReshaped,
                 keys: kReshaped,
                 values: vReshaped,
-                scale: 1.0 / sqrt(Float(qReshaped.shape.last!))
+                scale: 1.0 / sqrt(Float(qReshaped.shape.last!)),
+                mask: .none
             )
         } else {
             fatalError("Unfused attention not implemented")
@@ -581,10 +765,10 @@ private class MultiQueryAttention2d: Module {
 
 // MARK: - Mobile Attention
 
-private class MobileAttention: Module {
-    @ModuleInfo var norm: Gemma3nRMSNorm2d
-    @ModuleInfo var attn: MultiQueryAttention2d
-    @ModuleInfo var layerScale: Module?
+private class MobileAttention: Module, UnaryLayer {
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "attn") var attn: MultiQueryAttention2d
+    @ModuleInfo(key: "layer_scale") var layerScale: LayerScale2d?
     
     let hasSkip: Bool
     let queryStrides: (Int, Int)
@@ -617,7 +801,7 @@ private class MobileAttention: Module {
         self.queryStrides = queryStrides
         
         // Normalization layer
-        self.norm = Gemma3nRMSNorm2d(
+        self._norm.wrappedValue = Gemma3nRMSNorm2d(
             numChannels: inChs,
             eps: 1e-05,
             applyAct: false
@@ -625,7 +809,7 @@ private class MobileAttention: Module {
         
         // Attention layer
         if useMultiQuery {
-            self.attn = MultiQueryAttention2d(
+            self._attn.wrappedValue = MultiQueryAttention2d(
                 dim: inChs,
                 dimOut: outChs,
                 numHeads: numHeads,
@@ -708,9 +892,9 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
             outChs: self.outChannels,
             dwKernelSizeStart: 0,
             dwKernelSizeMid: 0,
+            noskip: self.noskip,
             expRatio: expansionRatio,
             normLayer: Gemma3nRMSNorm2d.self,
-            noskip: self.noskip,
             layerScaleInitValue: useLayerScale ? layerScaleInitValue : nil
         )
         
@@ -750,9 +934,9 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
 // MARK: - Vision Tower
 
 private class VisionTower: Module {
-    @ModuleInfo var convStem: ConvNormAct
-    @ModuleInfo var blocks: [[Module]]
-    @ModuleInfo var msfa: MobileNetV5MultiScaleFusionAdapter
+    @ModuleInfo(key: "conv_stem") var convStem: ConvNormAct
+    @ModuleInfo(key: "blocks") var blocks: [[Module]]
+    @ModuleInfo(key: "msfa") var msfa: MobileNetV5MultiScaleFusionAdapter
     
     let numFeatures: Int
     let headHiddenSize: Int
@@ -760,15 +944,15 @@ private class VisionTower: Module {
     let msfaOutputResolution: (Int, Int)
     
     init(config: Gemma3nVisionConfiguration) {
-        self.convStem = ConvNormAct(
+        self._convStem.wrappedValue = ConvNormAct(
             convCls: Conv2dSame.self,
             inChs: 3,
             outChs: 64,
             kernelSize: 3,
             stride: 2,
             padding: 0,
-            eps: 1e-05,
-            bias: true
+            bias: true,
+            eps: 1e-05
         )
         
         self.msfaIndices = (3, 4)
@@ -780,7 +964,7 @@ private class VisionTower: Module {
         self.headHiddenSize = numFeatures
         self._blocks.wrappedValue = blocks
         
-        self.msfa = MobileNetV5MultiScaleFusionAdapter(
+        self._msfa.wrappedValue = MobileNetV5MultiScaleFusionAdapter(
             inChs: [1920],
             outChs: 2048,
             outputResolution: msfaOutputResolution.0
@@ -855,7 +1039,11 @@ private class VisionTower: Module {
         for blockGroup in blocks {
             featIdx += 1
             for block in blockGroup {
-                x = block(x)
+                if let unaryBlock = block as? any UnaryLayer {
+                    x = unaryBlock(x)
+                } else {
+                    fatalError("Block must implement UnaryLayer")
+                }
             }
             
             if msfaIndices.0 == featIdx || msfaIndices.1 == featIdx {
@@ -871,7 +1059,7 @@ private class VisionTower: Module {
 // MARK: - Vision Model
 
 public class Gemma3nVisionModel: Module {
-    @ModuleInfo var timmModel: VisionTower
+    @ModuleInfo(key: "timm_model") private var timmModel: VisionTower
     
     let modelType: String
     
@@ -882,7 +1070,7 @@ public class Gemma3nVisionModel: Module {
             fatalError("Unsupported model type: \(modelType)")
         }
         
-        self.timmModel = VisionTower(config: config)
+        self._timmModel.wrappedValue = VisionTower(config: config)
     }
     
     public func callAsFunction(_ x: MLXArray, outputHiddenStates: Bool? = nil) -> MLXArray {
@@ -928,43 +1116,61 @@ private enum BlockConfig {
 }
 
 private func gemma3nMobilenetDef() -> [[BlockConfig]] {
-    return [
-        // Stage 1: Edge Residuals
-        [
-            .edgeResidual(kernelSize: 3, filters: 128, strides: 2, expandRatio: 4.0, isMultiscale: false),
-            .edgeResidual(kernelSize: 3, filters: 128, strides: 1, expandRatio: 4.0, isMultiscale: false),
-            .edgeResidual(kernelSize: 3, filters: 128, strides: 1, expandRatio: 4.0, isMultiscale: false)
-        ],
-        // Stage 2: Universal Inverted Residuals
-        [
-            .universalInvertedResidual(startDw: 3, midDw: 5, filters: 256, strides: 2, expandRatio: 6.0, isMultiscale: false)
-        ] + [
-            .universalInvertedResidual(startDw: 5, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false),
-            .universalInvertedResidual(startDw: 3, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false),
-            .universalInvertedResidual(startDw: 5, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false),
-            .universalInvertedResidual(startDw: 3, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false)
-        ],
-        // Stage 3: Universal Inverted Residuals with Multi-Query Attention
-        [
-            .universalInvertedResidual(startDw: 5, midDw: 5, filters: 640, strides: 2, expandRatio: 6.0, isMultiscale: false)
-        ] + Array(repeating: .universalInvertedResidual(startDw: 5, midDw: 0, filters: 640, strides: 1, expandRatio: 4.0, isMultiscale: false), count: 7) + [
-            .universalInvertedResidual(startDw: 0, midDw: 0, filters: 640, strides: 1, expandRatio: 1.0, isMultiscale: false)
-        ] + Array(0..<13).flatMap { _ in [
+    // Stage 1: Edge Residuals
+    let stage1: [BlockConfig] = [
+        .edgeResidual(kernelSize: 3, filters: 128, strides: 2, expandRatio: 4.0, isMultiscale: false),
+        .edgeResidual(kernelSize: 3, filters: 128, strides: 1, expandRatio: 4.0, isMultiscale: false),
+        .edgeResidual(kernelSize: 3, filters: 128, strides: 1, expandRatio: 4.0, isMultiscale: false)
+    ]
+    
+    // Stage 2: Universal Inverted Residuals
+    var stage2: [BlockConfig] = [
+        .universalInvertedResidual(startDw: 3, midDw: 5, filters: 256, strides: 2, expandRatio: 6.0, isMultiscale: false)
+    ]
+    stage2 += [
+        .universalInvertedResidual(startDw: 5, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false),
+        .universalInvertedResidual(startDw: 3, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false),
+        .universalInvertedResidual(startDw: 5, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false),
+        .universalInvertedResidual(startDw: 3, midDw: 0, filters: 256, strides: 1, expandRatio: 4.0, isMultiscale: false)
+    ]
+    
+    // Stage 3: Universal Inverted Residuals with Multi-Query Attention
+    var stage3: [BlockConfig] = [
+        .universalInvertedResidual(startDw: 5, midDw: 5, filters: 640, strides: 2, expandRatio: 6.0, isMultiscale: false)
+    ]
+    stage3 += Array(repeating: .universalInvertedResidual(startDw: 5, midDw: 0, filters: 640, strides: 1, expandRatio: 4.0, isMultiscale: false), count: 7)
+    stage3 += [
+        .universalInvertedResidual(startDw: 0, midDw: 0, filters: 640, strides: 1, expandRatio: 1.0, isMultiscale: false)
+    ]
+    
+    // Add 13 pairs of multiQueryAttention + universalInvertedResidual
+    for _ in 0..<13 {
+        stage3 += [
             .multiQueryAttention(numHeads: 12, kvDim: 64, kvStrides: 2, avgPoolKv: false, isMultiscale: false),
             .universalInvertedResidual(startDw: 0, midDw: 0, filters: 640, strides: 1, expandRatio: 2.0, isMultiscale: false)
-        ]} + [
-            .multiQueryAttention(numHeads: 12, kvDim: 64, kvStrides: 2, avgPoolKv: false, isMultiscale: false),
-            .universalInvertedResidual(startDw: 0, midDw: 0, filters: 640, strides: 1, expandRatio: 2.0, isMultiscale: true)
-        ],
-        // Stage 4: Universal Inverted Residuals with Multi-Query Attention
-        [
-            .universalInvertedResidual(startDw: 5, midDw: 5, filters: 1280, strides: 2, expandRatio: 6.0, isMultiscale: false)
-        ] + Array(0..<18).flatMap { _ in [
+        ]
+    }
+    stage3 += [
+        .multiQueryAttention(numHeads: 12, kvDim: 64, kvStrides: 2, avgPoolKv: false, isMultiscale: false),
+        .universalInvertedResidual(startDw: 0, midDw: 0, filters: 640, strides: 1, expandRatio: 2.0, isMultiscale: true)
+    ]
+    
+    // Stage 4: Universal Inverted Residuals with Multi-Query Attention
+    var stage4: [BlockConfig] = [
+        .universalInvertedResidual(startDw: 5, midDw: 5, filters: 1280, strides: 2, expandRatio: 6.0, isMultiscale: false)
+    ]
+    
+    // Add 18 pairs of multiQueryAttention + universalInvertedResidual
+    for _ in 0..<18 {
+        stage4 += [
             .multiQueryAttention(numHeads: 16, kvDim: 96, kvStrides: 1, avgPoolKv: false, isMultiscale: false),
             .universalInvertedResidual(startDw: 0, midDw: 0, filters: 1280, strides: 1, expandRatio: 2.0, isMultiscale: false)
-        ]} + [
-            .multiQueryAttention(numHeads: 16, kvDim: 96, kvStrides: 1, avgPoolKv: false, isMultiscale: false),
-            .universalInvertedResidual(startDw: 0, midDw: 0, filters: 1280, strides: 1, expandRatio: 2.0, isMultiscale: true)
         ]
+    }
+    stage4 += [
+        .multiQueryAttention(numHeads: 16, kvDim: 96, kvStrides: 1, avgPoolKv: false, isMultiscale: false),
+        .universalInvertedResidual(startDw: 0, midDw: 0, filters: 1280, strides: 1, expandRatio: 2.0, isMultiscale: true)
     ]
+    
+    return [stage1, stage2, stage3, stage4]
 }

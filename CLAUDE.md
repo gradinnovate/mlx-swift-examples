@@ -84,6 +84,12 @@ The project is organized as multiple Swift packages:
 
 ## Development Guidelines
 
+### MANDATORY API VERIFICATION WORKFLOW
+1. **Step 1**: Before implementing any MLX Swift code, use context7 to query the specific API
+2. **Step 2**: Verify parameter types, function signatures, and usage patterns from context7 results
+3. **Step 3**: Only then proceed with implementation using the verified API information
+4. **Step 4**: If compilation errors occur, return to context7 before making assumptions
+
 ### Model Implementation
 - New model types go in respective `Models/` directories
 - Register new models in factory registries (`LLMTypeRegistry.all()`)
@@ -97,6 +103,13 @@ The project is organized as multiple Swift packages:
 - Comprehensive error handling with custom error types
 
 ### Porting VLM Model Guidelines
+
+#### CRITICAL API REFERENCE RULE
+- **BEFORE writing ANY MLX Swift code**: ALWAYS use the context7 tool to query the exact API signatures and parameter types
+- **NEVER assume or guess** MLX Swift API parameters - context7 provides the authoritative reference
+- When encountering compilation errors related to types (e.g., `PaddingOrInt`, `IntOrPair`), immediately use context7 to verify the correct types
+
+#### Core Porting Guidelines  
 - When porting models from the mlx-python version, ensure the mlx-swift implementation matches the Python version **as closely as possible**.
 - For questions about the mlx-swift API, MUST use the context7 tool for reference.
 - When porting a VLM model, place the model implementation in `Libraries/MLXVLM/Models`.
