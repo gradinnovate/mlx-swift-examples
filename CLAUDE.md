@@ -424,7 +424,7 @@ public class MyModel: Module, UnaryLayer {
     @ModuleInfo var linear: Linear
     
     public init(inputDim: Int, outputDim: Int) {
-        self.linear = Linear(inputDim, outputDim)
+        self._linear.wrappedValue = Linear(inputDim, outputDim)
         super.init()
     }
     
@@ -631,7 +631,7 @@ public class MyLayer: Module, UnaryLayer {
     @ModuleInfo var linear: Linear
     
     public init() {
-        self.linear = Linear(10, 20)
+        self._linear.wrappedValue = Linear(10, 20)
         super.init()
     }
 }
@@ -701,7 +701,10 @@ self.q_proj = nn.Linear(dim, n_heads * head_dim, bias=False)
 
 **Swift:**
 ```swift
-@ModuleInfo var qProj: Linear = Linear(dim, nHeads * headDim, bias: false)
+@ModuleInfo var qProj: Linear
+
+// In init():
+self._qProj.wrappedValue = Linear(dim, nHeads * headDim, bias: false)
 ```
 
 ### 2. Multiple Normalizations
@@ -714,8 +717,12 @@ self.post_attention_layernorm = nn.RMSNorm(config.hidden_size, eps=config.rms_no
 
 **Swift:**
 ```swift
-@ModuleInfo var inputLayernorm: RMSNorm = RMSNorm(config.hiddenSize, eps: config.rmsNormEps)
-@ModuleInfo var postAttentionLayernorm: RMSNorm = RMSNorm(config.hiddenSize, eps: config.rmsNormEps)
+@ModuleInfo var inputLayernorm: RMSNorm
+@ModuleInfo var postAttentionLayernorm: RMSNorm
+
+// In init():
+self._inputLayernorm.wrappedValue = RMSNorm(config.hiddenSize, eps: config.rmsNormEps)
+self._postAttentionLayernorm.wrappedValue = RMSNorm(config.hiddenSize, eps: config.rmsNormEps)
 ```
 
 ### 3. Activation Usage
