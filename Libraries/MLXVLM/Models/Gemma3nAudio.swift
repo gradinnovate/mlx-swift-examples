@@ -302,10 +302,9 @@ private class Gemma3nAudioAttention: Module {
     }
     
     func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
-        let queryStates = qProj(x).reshaped(x.shape + [numHeads, headDim])
-        let keyStates = kProj(x).reshaped(x.shape + [numHeads, headDim])  
-        let valueStates = vProj(x).reshaped(x.shape + [numHeads, headDim])
-        
+        let queryStates = qProj(x).reshaped(Array(x.shape[..<(x.shape.count-1)]) + [numHeads, headDim])
+        let keyStates = kProj(x).reshaped(Array(x.shape[..<(x.shape.count-1)]) + [numHeads, headDim])
+        let valueStates = vProj(x).reshaped(Array(x.shape[..<(x.shape.count-1)]) + [numHeads, headDim])
         let perDimScaleSp = logAddExp(perDimScale, MLXArray(0.0))
         let broadcastShape = [1, 1, 1, headDim]
         let perDimScaleBroadcast = perDimScaleSp.reshaped(broadcastShape)
