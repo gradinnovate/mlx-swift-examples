@@ -38,7 +38,7 @@ private func maskedScatter(
     // Vectorized selection from source
     let selectedValues = sourceFlat[boundedIndices]
     
-    let result = where(maskFlat, selectedValues, resultFlat)
+    let result = MLX.where(maskFlat, selectedValues, resultFlat)
     return result.reshaped(inputShape)
 }
 
@@ -158,7 +158,7 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             greaterEqual(inputIds!, MLXArray(0)),
             less(inputIds!, MLXArray(config.textConfig.vocabSizePerLayerInput))
         )
-        let perLayerInputsTokens = where(
+        let perLayerInputsTokens = MLX.where(
             perLayerInputsMask,
             inputIds!,
             zeros(like: inputIds!)
@@ -176,9 +176,9 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
                 less(inputIds, MLXArray(embedAudio.vocabOffset))
             )
             let dummyVisionTokenId = embedVision.vocabOffset + embedVision.vocabSize - 1
-            let visionTokens = where(visionMask, inputIds, MLXArray(dummyVisionTokenId))
+            let visionTokens = MLX.where(visionMask, inputIds, MLXArray(dummyVisionTokenId))
             let visionEmbedsFlat = embedVision(inputIds: visionTokens)
-            inputsEmbeds = where(
+            inputsEmbeds = MLX.where(
                 visionMask.expandedDimensions(axis: -1),
                 visionEmbedsFlat,
                 inputsEmbeds
@@ -187,9 +187,9 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             // Handle audio tokens
             let audioMask = greaterEqual(inputIds, MLXArray(embedAudio.vocabOffset))
             let dummyAudioTokenId = embedAudio.vocabOffset + embedAudio.vocabSize - 1
-            let audioTokens = where(audioMask, inputIds, MLXArray(dummyAudioTokenId))
+            let audioTokens = MLX.where(audioMask, inputIds, MLXArray(dummyAudioTokenId))
             let audioEmbedsFlat = embedAudio(inputIds: audioTokens)
-            inputsEmbeds = where(
+            inputsEmbeds = MLX.where(
                 audioMask.expandedDimensions(axis: -1),
                 audioEmbedsFlat,
                 inputsEmbeds
@@ -198,7 +198,7 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
         
         // Vision features
         if let pixelValues = pixelValues {
-            let imageFeatures = getImageFeatures(
+            let imageFeatures = Self.getImageFeatures(
                 pixelValues: pixelValues,
                 visionTower: visionTower,
                 config: config,
@@ -206,7 +206,7 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             )
             
             let modality = "image"
-            inputsEmbeds = mergeMultimodalAndText(
+            inputsEmbeds = Self.mergeMultimodalAndText(
                 inputsEmbeds,
                 imageFeatures,
                 constructSpecialModalityMask(
@@ -227,7 +227,7 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             )
             let audioPaddingIds = MLXArray([config.vocabSize - 1])
             let audioPaddingEmbs = embedAudio(inputIds: audioPaddingIds)
-            let maskedAudioFeatures = where(
+            let maskedAudioFeatures = MLX.where(
                 audioMask.expandedDimensions(axis: -1),
                 audioPaddingEmbs,
                 audioFeatures
@@ -246,7 +246,7 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             
             let finalAudioFeatures = concatenated([maskedAudioFeatures, extraPaddingFeatures], axis: 1)
             let modality = "audio"
-            inputsEmbeds = mergeMultimodalAndText(
+            inputsEmbeds = Self.mergeMultimodalAndText(
                 inputsEmbeds,
                 finalAudioFeatures,
                 constructSpecialModalityMask(
@@ -299,8 +299,12 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             let specialModalityMask = equal(inputIds, MLXArray(tokenId)).expandedDimensions(axis: -1)
             return broadcast(specialModalityMask, to: inputsEmbeds.shape)
         } else {
-            let embedFn = (modality == "audio") ? embedAudio : languageModel.model.embedTokens
-            let targetEmbed = embedFn(MLXArray([tokenId]))
+            let targetEmbed: MLXArray
+            if modality == "audio" {
+                targetEmbed = embedAudio(inputIds: MLXArray([tokenId]))
+            } else {
+                targetEmbed = languageModel.model.embedTokens(MLXArray([tokenId]))
+            }
             return equal(inputsEmbeds, targetEmbed)
         }
     }
@@ -418,7 +422,6 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
         return sanitizedWeights
     }
     
-    @property
     public var layers: [Module] {
         return languageModel.model.layers.map { $0 as Module }
     }
@@ -522,6 +525,11 @@ public struct Gemma3nProcessorConfiguration: Codable, Sendable {
     public struct ImageSize: Codable, Sendable {
         public let height: Int
         public let width: Int
+        
+        public init(height: Int, width: Int) {
+            self.height = height
+            self.width = width
+        }
     }
     
     public var imageSize: Int { size.height }

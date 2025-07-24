@@ -65,7 +65,7 @@ private class RMSNoScale: Module {
 
 // MARK: - Laurel Block
 
-private class Gemma3nLaurelBlock: Module {
+public class Gemma3nLaurelBlock: Module {
     @ModuleInfo(key: "linear_left") var linearLeft: Linear
     @ModuleInfo(key: "linear_right") var linearRight: Linear
     @ModuleInfo(key: "post_laurel_norm") var postLaurelNorm: RMSNorm
@@ -96,7 +96,7 @@ private class Gemma3nLaurelBlock: Module {
 
 // MARK: - Attention
 
-private class Gemma3nAttention: Module {
+public class Gemma3nAttention: Module {
     let isSliding: Bool
     let numHeads: Int
     let numKVHeads: Int
@@ -113,7 +113,7 @@ private class Gemma3nAttention: Module {
     
     @ModuleInfo(key: "q_norm") var qNorm: RMSNorm
     @ModuleInfo(key: "k_norm") var kNorm: RMSNorm
-    let vNorm: RMSNoScale
+    fileprivate let vNorm: RMSNoScale
     
     let rope: RoPE
     
@@ -221,14 +221,14 @@ private class Gemma3nAttention: Module {
 
 // MARK: - MLP with TopK GELU
 
-private func geluTopK(_ inputs: MLXArray, _ stdMultiplier: MLXArray) -> MLXArray {
+public func geluTopK(_ inputs: MLXArray, _ stdMultiplier: MLXArray) -> MLXArray {
     let inputsMean = inputs.mean(axis: -1, keepDims: true)
     let inputsStd = std(inputs, axis: -1, keepDims: true, ddof: 0)
     let cutoffX = inputsMean + inputsStd * stdMultiplier.asType(inputsStd.dtype)
     return geluApproximate(maximum(MLXArray(0), inputs - cutoffX))
 }
 
-private class MLP: Module {
+public class Gemma3nMLP: Module {
     @ModuleInfo(key: "gate_proj") var gateProj: Linear
     @ModuleInfo(key: "up_proj") var upProj: Linear
     @ModuleInfo(key: "down_proj") var downProj: Linear
@@ -279,7 +279,7 @@ private class MLP: Module {
 
 // MARK: - AltUp (Alternating Updates)
 
-private class Gemma3nAltUp: Module {
+public class Gemma3nAltUp: Module {
     @ParameterInfo(key: "correct_output_scale") var correctOutputScale: MLXArray
     @ModuleInfo(key: "correction_coefs") var correctionCoefs: Linear
     @ModuleInfo(key: "prediction_coefs") var predictionCoefs: Linear
@@ -367,18 +367,18 @@ private class Gemma3nAltUp: Module {
 
 // MARK: - Decoder Layer
 
-private class Gemma3nDecoderLayer: Module {
-    @ModuleInfo(key: "self_attn") var selfAttn: Gemma3nAttention
-    @ModuleInfo(key: "mlp") var mlp: MLP
-    @ModuleInfo(key: "input_layernorm") var inputLayernorm: RMSNorm
-    @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayernorm: RMSNorm
-    @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedforwardLayernorm: RMSNorm
-    @ModuleInfo(key: "post_feedforward_layernorm") var postFeedforwardLayernorm: RMSNorm
-    @ModuleInfo(key: "altup") var altup: Gemma3nAltUp
-    @ModuleInfo(key: "laurel") var laurel: Gemma3nLaurelBlock
-    @ModuleInfo(key: "per_layer_input_gate") var perLayerInputGate: Linear
-    @ModuleInfo(key: "per_layer_projection") var perLayerProjection: Linear
-    @ModuleInfo(key: "post_per_layer_input_norm") var postPerLayerInputNorm: RMSNorm
+public class Gemma3nDecoderLayer: Module {
+    @ModuleInfo(key: "self_attn") public var selfAttn: Gemma3nAttention
+    @ModuleInfo(key: "mlp") public var mlp: Gemma3nMLP
+    @ModuleInfo(key: "input_layernorm") public var inputLayernorm: RMSNorm
+    @ModuleInfo(key: "post_attention_layernorm") public var postAttentionLayernorm: RMSNorm
+    @ModuleInfo(key: "pre_feedforward_layernorm") public var preFeedforwardLayernorm: RMSNorm
+    @ModuleInfo(key: "post_feedforward_layernorm") public var postFeedforwardLayernorm: RMSNorm
+    @ModuleInfo(key: "altup") public var altup: Gemma3nAltUp
+    @ModuleInfo(key: "laurel") public var laurel: Gemma3nLaurelBlock
+    @ModuleInfo(key: "per_layer_input_gate") public var perLayerInputGate: Linear
+    @ModuleInfo(key: "per_layer_projection") public var perLayerProjection: Linear
+    @ModuleInfo(key: "post_per_layer_input_norm") public var postPerLayerInputNorm: RMSNorm
     
     let config: Gemma3nTextConfiguration
     let hiddenSize: Int
@@ -396,7 +396,7 @@ private class Gemma3nDecoderLayer: Module {
         self._selfAttn.wrappedValue = Gemma3nAttention(
             config: config, layerIdx: layerIdx, isKVSharedLayer: isKVSharedLayer
         )
-        self._mlp.wrappedValue = MLP(config: config, layerIdx: layerIdx)
+        self._mlp.wrappedValue = Gemma3nMLP(config: config, layerIdx: layerIdx)
         
         self._inputLayernorm.wrappedValue = RMSNorm(
             dimensions: hiddenSize, eps: config.rmsNormEps
@@ -478,9 +478,9 @@ private class Gemma3nDecoderLayer: Module {
 
 // MARK: - Gemma3 Model
 
-private class Gemma3Model: Module {
-    @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
-    @ModuleInfo(key: "layers") var layers: [Gemma3nDecoderLayer]
+public class Gemma3Model: Module {
+    @ModuleInfo(key: "embed_tokens") public var embedTokens: Embedding
+    @ModuleInfo(key: "layers") public var layers: [Gemma3nDecoderLayer]
     @ModuleInfo(key: "norm") var norm: RMSNorm
     @ModuleInfo(key: "embed_tokens_per_layer") var embedTokensPerLayer: Embedding
     @ModuleInfo(key: "per_layer_model_projection") var perLayerModelProjection: Linear
@@ -578,7 +578,7 @@ private class Gemma3Model: Module {
         super.init()
     }
     
-    func getPerLayerInputs(_ inputIds: MLXArray) -> MLXArray {
+    public func getPerLayerInputs(_ inputIds: MLXArray) -> MLXArray {
         let perLayerInputsMask = less(inputIds, MLXArray(vocabSizePerLayerInput))
         let tokens = MLX.where(perLayerInputsMask, inputIds, zeros(like: inputIds))
         let result = embedTokensPerLayer(tokens) * sqrt(Float(hiddenSizePerLayerInput))
@@ -692,7 +692,7 @@ private class Gemma3Model: Module {
 // MARK: - Language Model
 
 public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
-    @ModuleInfo(key: "model") private var model: Gemma3Model
+    @ModuleInfo(key: "model") public var model: Gemma3Model
     
     public let config: Gemma3nTextConfiguration
     public var kvHeads: [Int]

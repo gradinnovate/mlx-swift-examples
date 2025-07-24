@@ -95,7 +95,17 @@ public struct Gemma3VisionConfiguration: Codable, Sendable {
     }
 }
 
+// MARK: - Quantization Configuration
 
+public struct QuantizationConfig: Codable, Sendable {
+    public let groupSize: Int
+    public let bits: Int
+
+    enum CodingKeys: String, CodingKey {
+        case groupSize = "group_size"
+        case bits
+    }
+}
 
 // MARK: - Model Configuration
 
@@ -104,6 +114,7 @@ public struct Gemma3Configuration: Codable, Sendable {
     public let visionConfiguration: Gemma3VisionConfiguration
     public let modelType: String
     public let mmTokensPerImage: Int
+    public let quantization: QuantizationConfig?
 
     private let _vocabularySize: Int?
     private let _padTokenId: Int?
@@ -127,6 +138,7 @@ public struct Gemma3Configuration: Codable, Sendable {
         case visionConfiguration = "vision_config"
         case modelType = "model_type"
         case mmTokensPerImage = "mm_tokens_per_image"
+        case quantization
 
         case _vocabularySize = "vocab_size"
         case _padTokenId = "pad_token_id"
@@ -439,15 +451,58 @@ private class LanguageModel: Module, KVCacheDimensionProvider {
         return LMOutput(logits: finalLogits)
     }
 
-    func sanitize(weights: [String: MLXArray])
+    func sanitize(weights: [String: MLXArray], quantizationConfig: QuantizationConfig? = nil)
         -> [String: MLXArray]
     {
         var processedWeights = weights
 
-        return processedWeights
+        // Check if we have quantized weights
+        let hasQuantizedLmHead = hasQuantizedWeights(
+            layerPath: "language_model.lm_head", in: weights)
+
+        if hasQuantizedLmHead {
+            // Use quantization config from model configuration if available
+            let groupSize = quantizationConfig?.groupSize ?? 64
+            let bits = quantizationConfig?.bits ?? 4
+
+            // Only quantize layers that actually have quantized weights
+            quantize(model: self) { path, module in
+                // Check each specific layer path for quantized weights
+                let fullPath = "language_model.\(path)"
+                if weights["\(fullPath).scales"] != nil && weights["\(fullPath).biases"] != nil
+                    && weights["\(fullPath).weight"]?.dtype == .uint32
+                {
+                    return (groupSize, bits)
+                }
+                return nil
+            }
+        } else {
+            // Handle weight tying for regular (non-quantized) lm_head
+            if processedWeights["language_model.lm_head.weight"] == nil {
+                if let embedWeight = processedWeights["language_model.model.embed_tokens.weight"] {
+                    processedWeights["language_model.lm_head.weight"] = embedWeight
+                }
+            }
+        }
+
+        // Remove unused precomputed rotary freqs
+        return processedWeights.filter { key, _ in
+            !key.contains("self_attn.rotary_emb.inv_freq")
+        }
     }
 
-    
+    /// Check if a layer has quantized weights
+    private func hasQuantizedWeights(layerPath: String, in weights: [String: MLXArray]) -> Bool {
+        let scalesKey = "\(layerPath).scales"
+        let biasesKey = "\(layerPath).biases"
+        let weightKey = "\(layerPath).weight"
+
+        let hasScales = weights[scalesKey] != nil
+        let hasBiases = weights[biasesKey] != nil
+        let hasWeight = weights[weightKey]?.dtype == .uint32
+
+        return hasScales && hasBiases && hasWeight
+    }
 }
 
 // MARK: - Vision Model Components
@@ -688,7 +743,7 @@ private class SigLipVisionModel: Module {
     }
 }
 
-private class Gemma3VisionModel: Module {
+private class VisionModel: Module {
     @ModuleInfo(key: "vision_model") var visionModel: SigLipVisionModel
 
     let modelType: String
@@ -859,7 +914,7 @@ private func maskedScatter(
 // MARK: - Gemma 3 Model
 
 public class Gemma3: Module, VLMModel, KVCacheDimensionProvider {
-    @ModuleInfo(key: "vision_tower") private var visionTower: Gemma3VisionModel
+    @ModuleInfo(key: "vision_tower") private var visionTower: VisionModel
     @ModuleInfo(key: "language_model") private var languageModel: LanguageModel
     @ModuleInfo(key: "multi_modal_projector") var multiModalProjector: Gemma3MultiModalProjector
 
@@ -876,7 +931,7 @@ public class Gemma3: Module, VLMModel, KVCacheDimensionProvider {
     public init(_ config: Gemma3Configuration) {
         self.config = config
 
-        self._visionTower.wrappedValue = Gemma3VisionModel(config: config.visionConfiguration)
+        self._visionTower.wrappedValue = VisionModel(config: config.visionConfiguration)
         self._languageModel.wrappedValue = LanguageModel(config.textConfiguration)
         self._multiModalProjector.wrappedValue = Gemma3MultiModalProjector(config: config)
     }
@@ -974,7 +1029,7 @@ public class Gemma3: Module, VLMModel, KVCacheDimensionProvider {
             // Text-only input
             let convertedCache = cache.compactMap { $0 as? KVCache }
             let result = languageModel(
-                input.text.tokens, cache: convertedCache, inputEmbedding: nil as MLXArray?, mask: nil as MLXFast.ScaledDotProductAttentionMaskMode?)
+                input.text.tokens, cache: convertedCache, inputEmbedding: nil, mask: nil)
             return .logits(result)
         }
 
@@ -989,7 +1044,7 @@ public class Gemma3: Module, VLMModel, KVCacheDimensionProvider {
         let maskMode: MLXFast.ScaledDotProductAttentionMaskMode = .causal
 
         let result = languageModel(
-            nil as MLXArray?,  // Pass nil for tokens when using embeddings
+            nil,  // Pass nil for tokens when using embeddings
             cache: convertedCache,
             inputEmbedding: inputEmbeddings,
             mask: maskMode
@@ -1012,8 +1067,9 @@ public class Gemma3: Module, VLMModel, KVCacheDimensionProvider {
                     || $0.contains("o_proj"))
         }
 
+        // Handle language model sanitization first (quantization, weight tying, etc.)
         var processedWeights = languageModel.sanitize(
-            weights: weights)
+            weights: weights, quantizationConfig: config.quantization)
 
         // Handle vision model sanitization (conv2d weight reshaping, etc.)
         processedWeights = visionTower.sanitize(weights: processedWeights)
