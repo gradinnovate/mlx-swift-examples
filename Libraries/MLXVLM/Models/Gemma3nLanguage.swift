@@ -198,7 +198,7 @@ private class Gemma3nAttention: Module {
             finalMask = slicedMask
         }
         
-        let output = scaledDotProductAttention(
+        let output = MLXFast.scaledDotProductAttention(
             queries: queries,
             keys: keys,
             values: values,
@@ -212,23 +212,12 @@ private class Gemma3nAttention: Module {
     }
 }
 
-// Helper function for scaled dot product attention
-private func scaledDotProductAttention(
-    queries: MLXArray,
-    keys: MLXArray,
-    values: MLXArray,
-    scale: Float,
-    mask: MLXArray?
-) -> MLXArray {
-    var scores = matmul(queries, keys.swappedAxes(-1, -2)) * scale
-    
-    if let mask = mask {
-        scores = scores + mask
-    }
-    
-    let weights = softmax(scores, axis: -1)
-    return matmul(weights, values)
-}
+// Note: Using MLXFast.scaledDotProductAttention for optimized Metal GPU performance
+// This provides:
+// - Optimized Metal kernels for query sequence length = 1 (inference)
+// - Automatic float32 softmax for numerical stability  
+// - Native support for Multi-Query and Grouped Query Attention
+// - Efficient memory usage without pre-tiling keys/values
 
 // MARK: - MLP with TopK GELU
 
