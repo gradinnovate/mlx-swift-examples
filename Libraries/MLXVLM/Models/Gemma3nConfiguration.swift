@@ -185,7 +185,7 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
     public let ropeTheta: Float
     public let queryPreAttnScalar: Float
     public let slidingWindow: Int
-    public let ropeScaling: [String: StringOrNumber]?
+    public let ropeScaling: [Float]?
     public let mmTokensPerImage: Int
     public let slidingWindowPattern: Int
     public let activationSparsityPattern: [Float]?
@@ -220,7 +220,7 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
         ropeTheta: Float = 1000000.0,
         queryPreAttnScalar: Float = 0.0625,
         slidingWindow: Int = 1024,
-        ropeScaling: [String: StringOrNumber]? = nil,
+        ropeScaling: [Float]? = nil,
         mmTokensPerImage: Int = 256,
         slidingWindowPattern: Int = 5,
         activationSparsityPattern: [Float]? = nil,

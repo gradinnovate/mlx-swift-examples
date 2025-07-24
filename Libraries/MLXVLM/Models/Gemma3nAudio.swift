@@ -11,21 +11,21 @@ import Foundation
 
 // MARK: - Helper Functions
 
-private func convertTorchToMLXPadWidth(_ padding: [Int], _ inputShape: [Int]) -> [(Int, Int)] {
+private func convertTorchToMLXPadWidth(_ padding: [Int], _ inputShape: [Int]) -> [IntOrPair] {
     let ndim = inputShape.count
-    var padWidth = Array(repeating: (0, 0), count: ndim)
+    var padWidth = Array(repeating: IntOrPair((0, 0)), count: ndim)
     
     if ndim >= 1 && padding.count >= 2 {
-        padWidth[ndim - 1] = (padding[0], padding[1])
+        padWidth[ndim - 1] = IntOrPair((padding[0], padding[1]))
     }
     if ndim >= 2 && padding.count >= 4 {
-        padWidth[ndim - 2] = (padding[2], padding[3])
+        padWidth[ndim - 2] = IntOrPair((padding[2], padding[3]))
     }
     if ndim >= 3 && padding.count >= 6 {
-        padWidth[ndim - 3] = (padding[4], padding[5])
+        padWidth[ndim - 3] = IntOrPair((padding[4], padding[5]))
     }
     if ndim >= 4 && padding.count >= 8 {
-        padWidth[ndim - 4] = (padding[6], padding[7])
+        padWidth[ndim - 4] = IntOrPair((padding[6], padding[7]))
     }
     
     return padWidth
@@ -35,7 +35,7 @@ private func convertTorchToMLXPadWidth(_ padding: [Int], _ inputShape: [Int]) ->
 
 private class Gemma3nAudioRelativePositionEmbedding: Module {
     @ModuleInfo(key: "pos_proj") var posProj: Linear
-    @ParameterInfo var invTimescales: MLXArray
+    let invTimescales: MLXArray
     
     let config: Gemma3nAudioConfiguration
     let numHeads: Int
@@ -120,7 +120,7 @@ private class Gemma3nAudioRelativePositionEmbedding: Module {
         )
         let keyContextSize = keys.shape[2]
         
-        let posIndices = MLXArray(maxBackward...(-maxForward-1)).reversed().expandedDimensions(axis: 0)
+        let posIndices = MLXArray(maxBackward...(-maxForward-1))[.stride(by: -1)].expandedDimensions(axis: 0)
         let maxSpanPlus1 = posIndices.shape[1]
         
         let sinEmbTimingSignal = getTimingSignal1dPos(posIndices, dtype: queries.dtype)
@@ -167,10 +167,10 @@ private class Gemma3nAudioAttention: Module {
     @ModuleInfo(key: "q_proj") var qProj: Linear
     @ModuleInfo(key: "k_proj") var kProj: Linear  
     @ModuleInfo(key: "v_proj") var vProj: Linear
-    @ModuleInfo var relativePositionEmbedding: Gemma3nAudioRelativePositionEmbedding
-    @ParameterInfo var perDimScale: MLXArray
-    @ParameterInfo var localCausalValidMask: MLXArray
-    @ParameterInfo var softcap: MLXArray
+    @ModuleInfo(key: "relative_position_embedding") var relativePositionEmbedding: Gemma3nAudioRelativePositionEmbedding
+    @ParameterInfo(key: "per_dim_scale") var perDimScale: MLXArray
+    let localCausalValidMask: MLXArray
+    let softcap: MLXArray
     
     let config: Gemma3nAudioConfiguration
     let numHeads: Int
@@ -196,8 +196,8 @@ private class Gemma3nAudioAttention: Module {
         self.attentionLogitsSoftCap = config.confAttentionLogitCap
         self.contextSize = chunkSize + maxPastHorizon + maxFutureHorizon
         
-        self.relativePositionEmbedding = Gemma3nAudioRelativePositionEmbedding(config: config)
-        self.perDimScale = zeros([headDim])
+        self._relativePositionEmbedding.wrappedValue = Gemma3nAudioRelativePositionEmbedding(config: config)
+        self._perDimScale.wrappedValue = zeros([headDim])
         
         self._qProj.wrappedValue = Linear(
             hiddenSize, numHeads * headDim, bias: false
@@ -210,20 +210,20 @@ private class Gemma3nAudioAttention: Module {
         )
         
         let qScale = pow(Float(headDim), -0.5)
-        let rSoftplus0 = 1.0 / log(2.0)
+        let rSoftplus0 = Float(1.0 / log(2.0))
         self.qScale = qScale * rSoftplus0
         
         // Create causal masks
         let lowerCausalMask = tril(
-            ones([contextSize, chunkSize], type: .bool), k: 0
+            MLXArray.ones([contextSize, chunkSize], type: Bool.self), k: 0
         ).transposed()
         
         let upperCausalMask = tril(
-            ones([chunkSize, contextSize], type: .bool),
+            MLXArray.ones([chunkSize, contextSize], type: Bool.self),
             k: maxPastHorizon + maxFutureHorizon
         )
         
-        let localCausalValidMask = ones([chunkSize, contextSize], type: .bool)
+        let localCausalValidMask = MLXArray.ones([chunkSize, contextSize], type: Bool.self)
         self.localCausalValidMask = logicalAnd(
             logicalAnd(localCausalValidMask, lowerCausalMask),
             upperCausalMask
@@ -275,7 +275,7 @@ private class Gemma3nAudioAttention: Module {
             let startIdx = i * step
             let endIdx = startIdx + size
             
-            var slices = Array(repeating: MLXArrayIndex.ellipsis, count: shape.count)
+            var slices: [any MLXArrayIndex] = Array(repeating: MLXEllipsisIndex.ellipsis, count: shape.count)
             slices[dimension] = startIdx..<endIdx
             
             windows.append(x[slices])
@@ -354,13 +354,13 @@ private class Gemma3nAudioAttention: Module {
         cappedLogits = cappedLogits * softcap
         
         // Apply mask
-        let maskedLogits = where(
+        let maskedLogits = MLX.where(
             finalConditionForWhere,
             cappedLogits,
             MLXArray(attentionInvalidLogitsValue)
         )
         
-        let probabilities = softmax(maskedLogits.asType(.float32), axis: -1)
+        let probabilities = softmax(maskedLogits.asType(Float32.self), axis: -1)
             .asType(valueBlocks.dtype)
         
         // Compute attention output
@@ -492,8 +492,8 @@ private class Gemma3nCumulativeGroupNorm: Module {
 // MARK: - SSCP Conv Block
 
 private class Gemma3nAudioSSCPConvBlock: Module {
-    @ModuleInfo var conv: Conv2d
-    @ModuleInfo var norm: Gemma3nCumulativeGroupNorm
+    @ModuleInfo(key: "conv") var conv: Conv2d
+    @ModuleInfo(key: "norm") var norm: Gemma3nCumulativeGroupNorm
     
     let config: Gemma3nAudioConfiguration
     let manualPadding: [Int]
@@ -512,19 +512,19 @@ private class Gemma3nAudioSSCPConvBlock: Module {
         let (kernelH, kernelW) = (config.sscpConvKernelSize[idx][0], config.sscpConvKernelSize[idx][1])
         let (strideH, strideW) = (config.sscpConvStrideSize[idx][0], config.sscpConvStrideSize[idx][1])
         
-        self.conv = Conv2d(
+        self._conv.wrappedValue = Conv2d(
             inputChannels: inChannels,
             outputChannels: outChannels,
-            kernelSize: IntOrPair(kernelH, kernelW),
-            stride: IntOrPair(strideH, strideW),
-            padding: PaddingOrInt(0),
+            kernelSize: IntOrPair((kernelH, kernelW)),
+            stride: IntOrPair((strideH, strideW)),
+            padding: IntOrPair(0),
             bias: false
         )
         
         let fInPadded = inputFreqDim + manualPadding[0] + manualPadding[1]
         let fOutConv = (fInPadded - kernelW) / strideW + 1
         
-        self.norm = Gemma3nCumulativeGroupNorm(
+        self._norm.wrappedValue = Gemma3nCumulativeGroupNorm(
             numChannels: outChannels,
             featureDims: [fOutConv],
             eps: config.sscpConvEps,
@@ -548,8 +548,8 @@ private class Gemma3nAudioSSCPConvBlock: Module {
 // MARK: - Sub Sample Conv Projection
 
 private class Gemma3nAudioSubSampleConvProjection: Module {
-    @ModuleInfo var conv0: Gemma3nAudioSSCPConvBlock
-    @ModuleInfo var conv1: Gemma3nAudioSSCPConvBlock
+    @ModuleInfo(key: "conv0") var conv0: Gemma3nAudioSSCPConvBlock
+    @ModuleInfo(key: "conv1") var conv1: Gemma3nAudioSSCPConvBlock
     @ModuleInfo(key: "input_proj_linear") var inputProjLinear: Linear
     
     let config: Gemma3nAudioConfiguration
@@ -580,13 +580,13 @@ private class Gemma3nAudioSubSampleConvProjection: Module {
             currentFForBlockInput = fOutAfterConv
         }
         
-        self.conv0 = Gemma3nAudioSSCPConvBlock(
+        self._conv0.wrappedValue = Gemma3nAudioSSCPConvBlock(
             idx: 0,
             inputFreqDim: config.inputFeatSize,
             config: config,
             manualPadding: calculatedBlockPadding[0]
         )
-        self.conv1 = Gemma3nAudioSSCPConvBlock(
+        self._conv1.wrappedValue = Gemma3nAudioSSCPConvBlock(
             idx: 1,
             inputFreqDim: calculatedFOutDims[0],
             config: config,
@@ -619,8 +619,8 @@ private class Gemma3nAudioSubSampleConvProjection: Module {
 
 private class Gemma3nAudioConformerAttention: Module {
     @ModuleInfo(key: "pre_attn_norm") var preAttnNorm: Gemma3nRMSNorm
-    @ModuleInfo var attn: Gemma3nAudioAttention
-    @ModuleInfo var post: Linear
+    @ModuleInfo(key: "attn") var attn: Gemma3nAudioAttention
+    @ModuleInfo(key: "post") var post: Linear
     @ModuleInfo(key: "post_norm") var postNorm: Gemma3nRMSNorm
     
     let config: Gemma3nAudioConfiguration
@@ -634,10 +634,10 @@ private class Gemma3nAudioConformerAttention: Module {
         
         self.gradientClipping = MLXArray(config.gradientClipping)
         
-        self.preAttnNorm = Gemma3nRMSNorm(dimensions: config.hiddenSize)
-        self.attn = Gemma3nAudioAttention(config: config)
-        self.post = Linear(postInFeatures, config.hiddenSize, bias: false)
-        self.postNorm = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        self._preAttnNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        self._attn.wrappedValue = Gemma3nAudioAttention(config: config)
+        self._post.wrappedValue = Linear(postInFeatures, config.hiddenSize, bias: false)
+        self._postNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
     }
     
     func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
@@ -676,10 +676,10 @@ private class Gemma3nAudioConformerFeedForward: Module {
         
         self.gradientClipping = MLXArray(config.gradientClipping)
         
-        self.preLayerNorm = Gemma3nRMSNorm(dimensions: config.hiddenSize)
-        self.ffwLayer1 = Linear(config.hiddenSize, config.hiddenSize * 4, bias: false)
-        self.ffwLayer2 = Linear(config.hiddenSize * 4, config.hiddenSize, bias: false)
-        self.postLayerNorm = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        self._preLayerNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        self._ffwLayer1.wrappedValue = Linear(config.hiddenSize, config.hiddenSize * 4, bias: false)
+        self._ffwLayer2.wrappedValue = Linear(config.hiddenSize * 4, config.hiddenSize, bias: false)
+        self._postLayerNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
         self.postLayerScale = MLXArray(config.confResidualWeight)
     }
     
@@ -713,13 +713,13 @@ private class Gemma3nAudioConformerLightConv1d: Module {
     init(config: Gemma3nAudioConfiguration) {
         self.config = config
         
-        self.preLayerNorm = Gemma3nRMSNorm(
+        self._preLayerNorm.wrappedValue = Gemma3nRMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps
         )
-        self.linearStart = Linear(
+        self._linearStart.wrappedValue = Linear(
             config.hiddenSize, config.hiddenSize * 2, bias: false
         )
-        self.depthwiseConv1d = Conv1d(
+        self._depthwiseConv1d.wrappedValue = Conv1d(
             inputChannels: config.hiddenSize,
             outputChannels: config.hiddenSize,
             kernelSize: config.confConvKernelSize,
@@ -729,10 +729,10 @@ private class Gemma3nAudioConformerLightConv1d: Module {
             bias: false
         )
         self.gradientClipping = MLXArray(config.gradientClipping)
-        self.convNorm = Gemma3nRMSNorm(
+        self._convNorm.wrappedValue = Gemma3nRMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps
         )
-        self.linearEnd = Linear(
+        self._linearEnd.wrappedValue = Linear(
             config.hiddenSize, config.hiddenSize, bias: false
         )
         
@@ -765,10 +765,10 @@ private class Gemma3nAudioConformerLightConv1d: Module {
 
 private class Gemma3nAudioConformerBlock: Module {
     @ModuleInfo(key: "ffw_layer_start") var ffwLayerStart: Gemma3nAudioConformerFeedForward
-    @ModuleInfo var attention: Gemma3nAudioConformerAttention
-    @ModuleInfo var lconv1d: Gemma3nAudioConformerLightConv1d
+    @ModuleInfo(key: "attention") var attention: Gemma3nAudioConformerAttention
+    @ModuleInfo(key: "lconv1d") var lconv1d: Gemma3nAudioConformerLightConv1d
     @ModuleInfo(key: "ffw_layer_end") var ffwLayerEnd: Gemma3nAudioConformerFeedForward
-    @ModuleInfo var norm: Gemma3nRMSNorm
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm
     
     let config: Gemma3nAudioConfiguration
     let gradientClipping: MLXArray
@@ -776,12 +776,12 @@ private class Gemma3nAudioConformerBlock: Module {
     init(config: Gemma3nAudioConfiguration) {
         self.config = config
         
-        self.ffwLayerStart = Gemma3nAudioConformerFeedForward(config: config)
-        self.attention = Gemma3nAudioConformerAttention(config: config)
-        self.lconv1d = Gemma3nAudioConformerLightConv1d(config: config)
-        self.ffwLayerEnd = Gemma3nAudioConformerFeedForward(config: config)
+        self._ffwLayerStart.wrappedValue = Gemma3nAudioConformerFeedForward(config: config)
+        self._attention.wrappedValue = Gemma3nAudioConformerAttention(config: config)
+        self._lconv1d.wrappedValue = Gemma3nAudioConformerLightConv1d(config: config)
+        self._ffwLayerEnd.wrappedValue = Gemma3nAudioConformerFeedForward(config: config)
         self.gradientClipping = MLXArray(config.gradientClipping)
-        self.norm = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        self._norm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
     }
     
     func callAsFunction(_ audioEncodings: MLXArray, _ audioMelMask: MLXArray) -> MLXArray {
@@ -803,15 +803,15 @@ private class Gemma3nAudioConformerBlock: Module {
 // MARK: - Audio Model
 
 public class Gemma3nAudioModel: Module {
-    @ModuleInfo var subsampleConvProjection: Gemma3nAudioSubSampleConvProjection
-    @ModuleInfo var conformer: [Gemma3nAudioConformerBlock]
+    @ModuleInfo(key: "subsample_conv_projection") private var subsampleConvProjection: Gemma3nAudioSubSampleConvProjection
+    @ModuleInfo(key: "conformer") private var conformer: [Gemma3nAudioConformerBlock]
     
     let config: Gemma3nAudioConfiguration
     
     public init(config: Gemma3nAudioConfiguration) {
         self.config = config
         
-        self.subsampleConvProjection = Gemma3nAudioSubSampleConvProjection(config: config)
+        self._subsampleConvProjection.wrappedValue = Gemma3nAudioSubSampleConvProjection(config: config)
         self._conformer.wrappedValue = (0..<config.confNumHiddenLayers).map { _ in
             Gemma3nAudioConformerBlock(config: config)
         }
@@ -831,7 +831,7 @@ public class Gemma3nAudioModel: Module {
         
         // Create indices for gathering from the original mask
         var indices = MLXArray(0..<tSub) * timeStrideProduct
-        indices = clip(indices, min: nil, max: audioMelMask.shape[1] - 1)
+        indices = clip(indices, min: Int.min, max: audioMelMask.shape[1] - 1)
         
         if audioMelMask.ndim > 1 && indices.ndim == 1 {
             indices = indices.expandedDimensions(axis: 0)
@@ -857,8 +857,8 @@ public class Gemma3nAudioModel: Module {
         
         if config.confReductionFactor > 1 {
             let step = config.confReductionFactor
-            audioEncodings = audioEncodings[0..., MLXArrayIndex(arrayLiteral: stride(from: 0, to: audioEncodings.shape[1], by: step)), 0...]
-            currentMask = currentMask[0..., MLXArrayIndex(arrayLiteral: stride(from: 0, to: currentMask.shape[1], by: step))]
+            audioEncodings = audioEncodings[0..., .stride(from: 0, to: audioEncodings.shape[1], by: step), 0...]
+            currentMask = currentMask[0..., .stride(from: 0, to: currentMask.shape[1], by: step)]
         }
         
         // Final masking adjustment
@@ -875,7 +875,7 @@ public class Gemma3nAudioModel: Module {
             }
         }
         
-        audioEncodings = where(currentMask.expandedDimensions(axis: -1), MLXArray(0.0), audioEncodings)
+        audioEncodings = MLX.where(currentMask.expandedDimensions(axis: -1), MLXArray(0.0), audioEncodings)
         return (audioEncodings, currentMask)
     }
     
