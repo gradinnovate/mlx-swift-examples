@@ -11,12 +11,12 @@ public struct Gemma3nAudioConfiguration: Codable, Sendable {
     public let confAttentionChunkSize: Int
     public let confAttentionContextLeft: Int
     public let confAttentionContextRight: Int
-    public let confAttentionInvalidLogitsValue: Float
+    public let confAttentionInvalidLogitsValue: Float?
     public let confAttentionLogitCap: Float
     public let confNumAttentionHeads: Int
     public let confNumHiddenLayers: Int
     public let confConvKernelSize: Int
-    public let confPositionalBiasSize: Int
+    public let confPositionalBiasSize: Int?
     public let confReductionFactor: Int
     public let confResidualWeight: Float
     public let sscpConvChannelSize: [Int]
@@ -24,7 +24,7 @@ public struct Gemma3nAudioConfiguration: Codable, Sendable {
     public let sscpConvKernelSize: [[Int]]
     public let sscpConvStrideSize: [[Int]]
     public let vocabSize: Int
-    public let sscpConvEps: Float
+    public let sscpConvEps: Float?
     public let rmsNormEps: Float
     public let gradientClipping: Float
     public let vocabOffset: Int
@@ -35,12 +35,12 @@ public struct Gemma3nAudioConfiguration: Codable, Sendable {
         confAttentionChunkSize: Int = 12,
         confAttentionContextLeft: Int = 13,
         confAttentionContextRight: Int = 0,
-        confAttentionInvalidLogitsValue: Float = -1e9,
+        confAttentionInvalidLogitsValue: Float? = -1e9,
         confAttentionLogitCap: Float = 50.0,
         confNumAttentionHeads: Int = 8,
         confNumHiddenLayers: Int = 12,
         confConvKernelSize: Int = 5,
-        confPositionalBiasSize: Int = 256,
+        confPositionalBiasSize: Int? = 256,
         confReductionFactor: Int = 4,
         confResidualWeight: Float = 0.5,
         sscpConvChannelSize: [Int] = [128, 32],
@@ -48,7 +48,7 @@ public struct Gemma3nAudioConfiguration: Codable, Sendable {
         sscpConvKernelSize: [[Int]] = [[3, 3], [3, 3]],
         sscpConvStrideSize: [[Int]] = [[2, 2], [2, 2]],
         vocabSize: Int = 128,
-        sscpConvEps: Float = 1e-3,
+        sscpConvEps: Float? = 1e-3,
         rmsNormEps: Float = 1e-6,
         gradientClipping: Float = 10000000000.0,
         vocabOffset: Int = 262_144 + 128
@@ -107,26 +107,26 @@ public struct Gemma3nAudioConfiguration: Codable, Sendable {
 
 public struct Gemma3nVisionConfiguration: Codable, Sendable {
     public let modelType: String
-    public let numHiddenLayers: Int
+    public let numHiddenLayers: Int?
     public let hiddenSize: Int
-    public let intermediateSize: Int
-    public let numAttentionHeads: Int
-    public let patchSize: Int
-    public let imageSize: Int
-    public let numChannels: Int
+    public let intermediateSize: Int?
+    public let numAttentionHeads: Int?
+    public let patchSize: Int?
+    public let imageSize: Int?
+    public let numChannels: Int?
     public let rmsNormEps: Float
     public let vocabSize: Int
     public let vocabOffset: Int
     
     public init(
         modelType: String = "gemma3n_vision",
-        numHiddenLayers: Int = 12,
+        numHiddenLayers: Int? = 12,
         hiddenSize: Int = 2048,
-        intermediateSize: Int = 8192,
-        numAttentionHeads: Int = 16,
-        patchSize: Int = 16,
-        imageSize: Int = 224,
-        numChannels: Int = 3,
+        intermediateSize: Int? = 8192,
+        numAttentionHeads: Int? = 16,
+        patchSize: Int? = 16,
+        imageSize: Int? = 224,
+        numChannels: Int? = 3,
         rmsNormEps: Float = 1e-6,
         vocabSize: Int = 128,
         vocabOffset: Int = 262_144
@@ -173,7 +173,7 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
     public let vocabSizePerLayerInput: Int
     public let numKeyValueHeads: Int
     public let laurelRank: Int
-    public let fracSharedLayers: Float
+    public let fracSharedLayers: Float?
     public let altupActiveIdx: Int
     public let padTokenId: Int
     public let altupNumInputs: Int
@@ -181,19 +181,19 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
     public let altupCorrectScale: Bool
     public let hiddenSizePerLayerInput: Int
     public let ropeLocalBaseFreq: Float
-    public let ropeTraditional: Bool
+    public let ropeTraditional: Bool?
     public let ropeTheta: Float
-    public let queryPreAttnScalar: Float
+    public let queryPreAttnScalar: Float?
     public let slidingWindow: Int
     public let ropeScaling: [Float]?
-    public let mmTokensPerImage: Int
-    public let slidingWindowPattern: Int
+    public let mmTokensPerImage: Int?
+    public let slidingWindowPattern: Int?
     public let activationSparsityPattern: [Float]?
     public let finalLogitSoftcapping: Float
-    public let queryRescaleScalar: Float
+    public let queryRescaleScalar: Float?
     public let numKvSharedLayers: Int
     public let maxPositionEmbeddings: Int
-    public let attnLogitSoftcapping: Float
+    public let attnLogitSoftcapping: Float?
     public let layerTypes: [String]
     
     public init(
@@ -208,7 +208,7 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
         vocabSizePerLayerInput: Int = 262144,
         numKeyValueHeads: Int = 4,
         laurelRank: Int = 64,
-        fracSharedLayers: Float = 0.5,
+        fracSharedLayers: Float? = 0.5,
         altupActiveIdx: Int = 0,
         padTokenId: Int = 0,
         altupNumInputs: Int = 4,
@@ -216,19 +216,19 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
         altupCorrectScale: Bool = true,
         hiddenSizePerLayerInput: Int = 1024,
         ropeLocalBaseFreq: Float = 10000.0,
-        ropeTraditional: Bool = false,
+        ropeTraditional: Bool? = false,
         ropeTheta: Float = 1000000.0,
-        queryPreAttnScalar: Float = 0.0625,
+        queryPreAttnScalar: Float? = 0.0625,
         slidingWindow: Int = 1024,
         ropeScaling: [Float]? = nil,
-        mmTokensPerImage: Int = 256,
-        slidingWindowPattern: Int = 5,
+        mmTokensPerImage: Int? = 256,
+        slidingWindowPattern: Int? = 5,
         activationSparsityPattern: [Float]? = nil,
         finalLogitSoftcapping: Float = 30.0,
-        queryRescaleScalar: Float = 1.0,
+        queryRescaleScalar: Float? = 1.0,
         numKvSharedLayers: Int = 0,
         maxPositionEmbeddings: Int = 32768,
-        attnLogitSoftcapping: Float = 0.0,
+        attnLogitSoftcapping: Float? = 0.0,
         layerTypes: [String] = []
     ) {
         self.modelType = modelType
@@ -255,7 +255,7 @@ public struct Gemma3nTextConfiguration: Codable, Sendable {
         self.queryPreAttnScalar = queryPreAttnScalar
         self.slidingWindow = slidingWindow
         self.ropeScaling = ropeScaling
-        self.mmTokensPerImage = mmTokensPerImage
+        self.mmTokensPerImage = mmTokensPerImage 
         self.slidingWindowPattern = slidingWindowPattern
         self.activationSparsityPattern = activationSparsityPattern
         self.finalLogitSoftcapping = finalLogitSoftcapping
@@ -310,13 +310,13 @@ public struct Gemma3nConfiguration: Codable, Sendable {
     public let visionConfig: Gemma3nVisionConfiguration
     public let audioConfig: Gemma3nAudioConfiguration
     public let modelType: String
-    public let vocabSize: Int
-    public let ignoreIndex: Int
-    public let imageTokenIndex: Int
+    public let vocabSize: Int?
+    public let ignoreIndex: Int?
+    public let imageTokenIndex: Int?
     public let audioTokenId: Int
     public let imageTokenId: Int
-    public let hiddenSize: Int
-    public let padTokenId: Int
+    public let hiddenSize: Int?
+    public let padTokenId: Int?
     public let visionSoftTokensPerImage: Int
     public let audioSoftTokensPerImage: Int
     public let eosTokenId: [Int]?
@@ -326,13 +326,13 @@ public struct Gemma3nConfiguration: Codable, Sendable {
         visionConfig: Gemma3nVisionConfiguration,
         audioConfig: Gemma3nAudioConfiguration,
         modelType: String,
-        vocabSize: Int = 257152,
-        ignoreIndex: Int = -100,
-        imageTokenIndex: Int = 262145,
+        vocabSize: Int? = 257152,
+        ignoreIndex: Int? = -100,
+        imageTokenIndex: Int? = 262145,
         audioTokenId: Int = 262273,
         imageTokenId: Int = 262145,
-        hiddenSize: Int = 2048,
-        padTokenId: Int = 0,
+        hiddenSize: Int? = 2048,
+        padTokenId: Int? = 0,
         visionSoftTokensPerImage: Int = 256,
         audioSoftTokensPerImage: Int = 188,
         eosTokenId: [Int]? = nil

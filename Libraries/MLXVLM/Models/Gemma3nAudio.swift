@@ -192,7 +192,7 @@ private class Gemma3nAudioAttention: Module {
         self.chunkSize = config.confAttentionChunkSize
         self.maxFutureHorizon = config.confAttentionContextRight
         self.maxPastHorizon = max(0, config.confAttentionContextLeft - 1)
-        self.attentionInvalidLogitsValue = config.confAttentionInvalidLogitsValue
+        self.attentionInvalidLogitsValue = config.confAttentionInvalidLogitsValue ?? -1e9
         self.attentionLogitsSoftCap = config.confAttentionLogitCap
         self.contextSize = chunkSize + maxPastHorizon + maxFutureHorizon
         
@@ -387,8 +387,7 @@ private class Gemma3nAudioAttention: Module {
 // MARK: - Cumulative Group Norm
 
 private class Gemma3nCumulativeGroupNorm: Module {
-    @ParameterInfo var weight: MLXArray?
-    @ParameterInfo var bias: MLXArray?
+    @ParameterInfo(key: "weight") var weight: MLXArray
     
     let numChannels: Int
     let featureDims: [Int]
@@ -409,18 +408,8 @@ private class Gemma3nCumulativeGroupNorm: Module {
         self.eps = eps
         self.useScale = useScale
         self.useBias = useBias
-        
-        if useScale {
-            self.weight = ones([numChannels])
-        } else {
-            self.weight = nil
-        }
-        
-        if useBias {
-            self.bias = zeros([numChannels])
-        } else {
-            self.bias = nil
-        }
+     
+        self._weight.wrappedValue = ones([numChannels])
         
         self.reductionAxes = Array(2..<(2 + featureDims.count + 1))
     }
@@ -471,16 +460,10 @@ private class Gemma3nCumulativeGroupNorm: Module {
         
         var normalizedX = (xCalc - cumMean) * rsqrt(cumVariance + eps)
         
-        if useScale, let weight = weight {
+        if useScale {
             let scale = weight.asType(calcDtype)
             let scaleViewShape = Array(repeating: 1, count: x.ndim - 1) + [numChannels]
             normalizedX = normalizedX * scale.reshaped(scaleViewShape)
-        }
-        
-        if useBias, let bias = bias {
-            let biasValue = bias.asType(calcDtype)
-            let biasViewShape = Array(repeating: 1, count: x.ndim - 1) + [numChannels]
-            normalizedX = normalizedX + biasValue.reshaped(biasViewShape)
         }
         
         let finalOutput = normalizedX * maskCalc
@@ -526,7 +509,7 @@ private class Gemma3nAudioSSCPConvBlock: Module {
         self._norm.wrappedValue = Gemma3nCumulativeGroupNorm(
             numChannels: outChannels,
             featureDims: [fOutConv],
-            eps: config.sscpConvEps,
+            eps: config.sscpConvEps ?? 1e-3,
             useScale: true,
             useBias: false
         )
@@ -547,8 +530,8 @@ private class Gemma3nAudioSSCPConvBlock: Module {
 // MARK: - Sub Sample Conv Projection
 
 private class Gemma3nAudioSubSampleConvProjection: Module {
-    @ModuleInfo(key: "conv0") var conv0: Gemma3nAudioSSCPConvBlock
-    @ModuleInfo(key: "conv1") var conv1: Gemma3nAudioSSCPConvBlock
+    @ModuleInfo(key: "conv_0") var conv0: Gemma3nAudioSSCPConvBlock
+    @ModuleInfo(key: "conv_1") var conv1: Gemma3nAudioSSCPConvBlock
     @ModuleInfo(key: "input_proj_linear") var inputProjLinear: Linear
     
     let config: Gemma3nAudioConfiguration

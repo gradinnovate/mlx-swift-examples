@@ -41,14 +41,12 @@ public class Gemma3nRMSNorm2d: Module {
     let eps: Float
     let applyAct: Bool
     
-    @ParameterInfo(key: "weight") var weight: MLXArray?
+    @ParameterInfo(key: "weight") var weight: MLXArray
     
     public init(numChannels: Int, eps: Float = 1e-6, applyAct: Bool = true) {
         self.normalizedShape = [numChannels]
         self.eps = eps
         self.applyAct = applyAct
-        
-        super.init()
         
         self._weight.wrappedValue = ones([numChannels])
     }
@@ -855,9 +853,9 @@ private class MobileAttention: Module, UnaryLayer {
 // MARK: - MobileNet V5 Multi-Scale Fusion Adapter
 
 private class MobileNetV5MultiScaleFusionAdapter: Module {
-    @ModuleInfo var ffn: UniversalInvertedResidual
-    @ModuleInfo var norm: Gemma3nRMSNorm2d
-    @ModuleInfo var avgPool: AvgPool2d?
+    @ModuleInfo(key: "ffn") var ffn: UniversalInvertedResidual
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "avg_pool") var avgPool: AvgPool2d?
     
     let inChannels: Int
     let outChannels: Int
@@ -887,7 +885,7 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
         self.layerScaleInitValue = layerScaleInitValue
         self.noskip = noskip
         
-        self.ffn = UniversalInvertedResidual(
+        self._ffn.wrappedValue = UniversalInvertedResidual(
             inChs: self.inChannels,
             outChs: self.outChannels,
             dwKernelSizeStart: 0,
@@ -898,7 +896,7 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
             layerScaleInitValue: useLayerScale ? layerScaleInitValue : nil
         )
         
-        self.norm = Gemma3nRMSNorm2d(numChannels: outChannels, eps: 1e-6, applyAct: false)
+        self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: outChannels, eps: 1e-6, applyAct: false)
         
         // Note: Pooling logic would be handled in MediaProcessing during preprocessing
         // following the critical guideline
@@ -1067,7 +1065,7 @@ public class Gemma3nVisionModel: Module {
         self.modelType = config.modelType
         
         if !["gemma3", "gemma3_vision", "gemma3n_vision"].contains(modelType) {
-            fatalError("Unsupported model type: \(modelType)")
+            fatalError("Unsupported vision model type: \(modelType)")
         }
         
         self._timmModel.wrappedValue = VisionTower(config: config)

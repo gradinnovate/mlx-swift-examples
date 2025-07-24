@@ -45,11 +45,11 @@ private func maskedScatter(
 // MARK: - Multimodal Embedder
 
 private class Gemma3nMultimodalEmbedder: Module {
-    @ModuleInfo var embedding: Embedding
+    @ModuleInfo(key: "embedding") var embedding: Embedding
     @ModuleInfo(key: "hard_embedding_norm") var hardEmbeddingNorm: Gemma3nRMSNorm
     @ModuleInfo(key: "soft_embedding_norm") var softEmbeddingNorm: Gemma3nRMSNorm
     @ModuleInfo(key: "embedding_projection") var embeddingProjection: Linear
-    @ModuleInfo(key: "embedding_post_projection_norm") var embeddingPostProjectionNorm: Gemma3nRMSNorm
+    let embeddingPostProjectionNorm: Gemma3nRMSNormNoWeight
     
     let multimodalHiddenSize: Int
     let eps: Float
@@ -57,11 +57,21 @@ private class Gemma3nMultimodalEmbedder: Module {
     let vocabSize: Int
     let textHiddenSize: Int
     
-    init(multimodalConfig: Gemma3nConfiguration, textConfig: Gemma3nTextConfiguration) {
-        self.multimodalHiddenSize = multimodalConfig.hiddenSize
+    init<T>(multimodalConfig: T, textConfig: Gemma3nTextConfiguration) {
+        // Extract properties based on config type
+        if let visionConfig = multimodalConfig as? Gemma3nVisionConfiguration {
+            self.multimodalHiddenSize = visionConfig.hiddenSize
+            self.vocabOffset = visionConfig.vocabOffset
+            self.vocabSize = visionConfig.vocabSize
+        } else if let audioConfig = multimodalConfig as? Gemma3nAudioConfiguration {
+            self.multimodalHiddenSize = audioConfig.hiddenSize
+            self.vocabOffset = audioConfig.vocabOffset
+            self.vocabSize = audioConfig.vocabSize
+        } else {
+            fatalError("Unsupported multimodalConfig type in Gemma3nMultimodalEmbedder initializer")
+        }
+        
         self.eps = 1e-6  // Default RMS norm eps
-        self.vocabOffset = 262_144  // Default vocab offset
-        self.vocabSize = 257_152    // Default vocab size
         self.textHiddenSize = textConfig.hiddenSize
         
         self._embedding.wrappedValue = Embedding(
@@ -79,10 +89,9 @@ private class Gemma3nMultimodalEmbedder: Module {
         self._embeddingProjection.wrappedValue = Linear(
             multimodalHiddenSize, textHiddenSize, bias: false
         )
-        self._embeddingPostProjectionNorm.wrappedValue = Gemma3nRMSNorm(
+        self.embeddingPostProjectionNorm = Gemma3nRMSNormNoWeight(
             dimensions: textHiddenSize,
-            eps: eps,
-            withScale: false
+            eps: eps
         )
     }
     
@@ -137,11 +146,11 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
         self._audioTower.wrappedValue = Gemma3nAudioModel(config: config.audioConfig)
         
         self._embedVision.wrappedValue = Gemma3nMultimodalEmbedder(
-            multimodalConfig: config,
+            multimodalConfig: config.visionConfig,
             textConfig: config.textConfig
         )
         self._embedAudio.wrappedValue = Gemma3nMultimodalEmbedder(
-            multimodalConfig: config,
+            multimodalConfig: config.audioConfig,
             textConfig: config.textConfig
         )
     }
@@ -225,7 +234,8 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
                 inputFeatures,
                 logicalNot(inputFeaturesMask)
             )
-            let audioPaddingIds = MLXArray([config.vocabSize - 1])
+            let vocabSize = config.vocabSize ?? 257152
+            let audioPaddingIds = MLXArray([vocabSize - 1])
             let audioPaddingEmbs = embedAudio(inputIds: audioPaddingIds)
             let maskedAudioFeatures = MLX.where(
                 audioMask.expandedDimensions(axis: -1),

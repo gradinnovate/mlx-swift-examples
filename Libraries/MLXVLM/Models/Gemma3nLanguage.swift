@@ -14,26 +14,19 @@ public class Gemma3nRMSNorm: Module {
     let dimensions: Int
     let eps: Float
     let scaleShift: Float
-    let withScale: Bool
     
-    @ParameterInfo(key: "weight") var weight: MLXArray?
+    @ParameterInfo(key: "weight") var weight: MLXArray
     
     public init(
         dimensions: Int,
         eps: Float = 1e-6,
-        scaleShift: Float = 0.0,
-        withScale: Bool = true
+        scaleShift: Float = 0.0
     ) {
         self.dimensions = dimensions
         self.eps = eps
-        self.scaleShift = scaleShift
-        self.withScale = withScale
-        super.init()
-        if withScale {
-            self.weight = ones([dimensions])
-        } else {
-            self.weight = nil
-        }
+        self.scaleShift = scaleShift        
+        self._weight.wrappedValue = ones([dimensions])
+       
     }
     
     private func norm(_ x: MLXArray) -> MLXArray {
@@ -43,10 +36,32 @@ public class Gemma3nRMSNorm: Module {
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
         var output = norm(x.asType(.float32))
         
-        if withScale, let weight = weight {
-            output = output * (weight + scaleShift)
-        }
+        output = output * (weight + scaleShift)
         
+        return output.asType(x.dtype)
+    }
+}
+
+public class Gemma3nRMSNormNoWeight: Module {
+    let dimensions: Int
+    let eps: Float
+  
+
+    public init(
+        dimensions: Int,
+        eps: Float = 1e-6
+    ) {
+        self.dimensions = dimensions
+        self.eps = eps
+    }
+    
+    private func norm(_ x: MLXArray) -> MLXArray {
+        return x * rsqrt(x.square().mean(axis: -1, keepDims: true) + eps)
+    }
+    
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let output = norm(x.asType(.float32))
+    
         return output.asType(x.dtype)
     }
 }
@@ -142,7 +157,7 @@ public class Gemma3nAttention: Module {
         let baseFreq = isSliding ? config.ropeLocalBaseFreq : config.ropeTheta
         self.rope = RoPE(
             dimensions: headDim,
-            traditional: config.ropeTraditional,
+            traditional: config.ropeTraditional ?? false,
             base: baseFreq
         )
     }
@@ -746,18 +761,7 @@ public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
     }
     
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
-        var sanitizedWeights: [String: MLXArray] = [:]
-        
-        for (k, v) in weights {
-            if !k.contains("language_model.model") && !k.contains("language_model.lm_head") {
-                let newKey = k.replacingOccurrences(of: "language_model", with: "language_model.model")
-                sanitizedWeights[newKey] = v
-            } else if k.contains("self_attn.rotary_emb.inv_freq") {
-                continue
-            } else {
-                sanitizedWeights[k] = v
-            }
-        }
+        let sanitizedWeights: [String: MLXArray] = [:]
         
         return sanitizedWeights
     }
