@@ -347,8 +347,9 @@ public class Gemma3nAltUp: Module {
             )
         }
         
-        // Apply prediction coefficients
-        let allCoefs = matmul(modalities, predictionCoefsWeight)
+        // Apply prediction coefficients using Linear layer (not direct matmul)
+        let allCoefsFlat = predictionCoefs(modalities)
+        let allCoefs = allCoefsFlat
             .reshaped(
                 modalities.shape[0], modalities.shape[1],
                 config.altupNumInputs, config.altupNumInputs
@@ -374,15 +375,21 @@ public class Gemma3nAltUp: Module {
             )
         }
         
-        let allCoefs = matmul(modalities, correctionCoefsWeight) + 1.0
+        // Use Linear layer instead of direct matmul
+        var allCoefs = correctionCoefs(modalities) + 1.0
         
         let activeX = predictions[config.altupActiveIdx]
         let innovation = activated - activeX
         
-        let allCoefsTransposed = allCoefs.transposed(2, 1, 0)
-        let corrected = innovation.expandedDimensions(axis: 0) * allCoefsTransposed[0..., .newAxis, 0...]
+        // Match Python broadcasting pattern: innovation[None] * all_coefs[:, None]
+        allCoefs = allCoefs.transposed(2, 1, 0)  // (num_inputs, batch, seq)
+        let innovationExpanded = innovation.expandedDimensions(axis: 0)  // (1, batch, seq, hidden)
+        let allCoefsExpanded = allCoefs.expandedDimensions(axis: 1)  // (num_inputs, 1, batch, seq)
         
-        return (corrected + predictions).asType(activated.dtype)
+        var corrected = innovationExpanded * allCoefsExpanded
+        corrected = corrected + predictions
+        
+        return corrected.asType(activated.dtype)
     }
 }
 

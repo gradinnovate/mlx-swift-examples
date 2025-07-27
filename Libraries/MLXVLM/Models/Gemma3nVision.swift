@@ -15,6 +15,58 @@ private func to2Tuple<T>(_ x: T) -> (T, T) {
     return (x, x)
 }
 
+/// Nearest neighbor interpolation for upsampling feature maps
+/// Matches the behavior of Python MLX nearest_interpolate
+private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArray {
+    let (batchSize, channels, currentH, currentW) = (
+        input.shape[0], input.shape[1], input.shape[2], input.shape[3]
+    )
+    let (targetH, targetW) = (targetSize[0], targetSize[1])
+    
+    // If already the target size, return as-is
+    if currentH == targetH && currentW == targetW {
+        return input
+    }
+    
+    // Calculate scale factors
+    let scaleH = Float(currentH) / Float(targetH)
+    let scaleW = Float(currentW) / Float(targetW)
+    
+    // Create coordinate grids for sampling
+    let yCoords = MLXArray(0..<targetH).asType(.float32) * scaleH
+    let xCoords = MLXArray(0..<targetW).asType(.float32) * scaleW
+    
+    // Convert to integer indices (nearest neighbor)
+    let yIndices = clip(yCoords.asType(.int32), min: 0, max: currentH - 1)
+    let xIndices = clip(xCoords.asType(.int32), min: 0, max: currentW - 1)
+    
+    // Sample using advanced indexing
+    // Create meshgrid for sampling
+    let yGrid = broadcast(yIndices.expandedDimensions(axis: 1), to: [targetH, targetW])
+    let xGrid = broadcast(xIndices.expandedDimensions(axis: 0), to: [targetH, targetW])
+    
+    // Sample from the input tensor
+    var output = zeros([batchSize, channels, targetH, targetW], dtype: input.dtype)
+    
+    for b in 0..<batchSize {
+        for c in 0..<channels {
+            let inputSlice = input[b, c, 0..., 0...]
+            var outputSlice = zeros([targetH, targetW], dtype: input.dtype)
+            
+            for h in 0..<targetH {
+                for w in 0..<targetW {
+                    let srcH = yIndices[h].item(Int.self)
+                    let srcW = xIndices[w].item(Int.self)
+                    outputSlice[h, w] = inputSlice[srcH, srcW]
+                }
+            }
+            output[b, c, 0..., 0...] = outputSlice
+        }
+    }
+    
+    return output
+}
+
 private func numGroups(groupSize: Int?, channels: Int) -> Int {
     if groupSize == nil || groupSize == 0 {
         return 1  // Normal conv with 1 group
@@ -931,15 +983,23 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
         // Convert from NHWC to NCHW for processing
         let inputsNCHW = inputs.map { $0.transposed(0, 3, 1, 2) }
         
-        // Get highest resolution
-        let highResolution = inputsNCHW[0].shape[2...]
+        // Get highest resolution (assuming first input is highest resolution)
+        let highResolution = Array(inputsNCHW[0].shape[2...])
         
-        // For MLX Swift implementation, we assume all preprocessing including
-        // resizing and interpolation has been done in MediaProcessing
-        // This follows the critical guideline to avoid interpolation in the neural network
+        // Resize all inputs to the highest resolution if needed
+        var resizedInputs: [MLXArray] = []
+        for img in inputsNCHW {
+            let currentResolution = Array(img.shape[2...])
+            if currentResolution[0] < highResolution[0] || currentResolution[1] < highResolution[1] {
+                let resized = nearestInterpolate(img, targetSize: highResolution)
+                resizedInputs.append(resized)
+            } else {
+                resizedInputs.append(img)
+            }
+        }
         
         // Concatenate along channel dimension
-        let channelCatImgs = concatenated(inputsNCHW, axis: 1)
+        let channelCatImgs = concatenated(resizedInputs, axis: 1)
         
         // Apply FFN (convert back to NHWC for processing)
         let channelCatImgsNHWC = channelCatImgs.transposed(0, 2, 3, 1)
@@ -950,7 +1010,33 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
             img = norm(img)
         }
         
-        return img
+        // Convert back to NCHW for final resolution adjustment
+        img = img.transposed(0, 3, 1, 2)
+        
+        // Final output resolution adjustment (matching Python implementation)
+        let currentResolution = Array(img.shape[2...])
+        if currentResolution[0] != outputResolution.0 || currentResolution[1] != outputResolution.1 {
+            if currentResolution[0] % outputResolution.0 != 0 || currentResolution[1] % outputResolution.1 != 0 {
+                // Use nearest interpolation for now (can be upgraded to bicubic later)
+                img = nearestInterpolate(img, targetSize: [outputResolution.0, outputResolution.1])
+            } else {
+                // Use average pooling for divisible ratios
+                let hStrides = currentResolution[0] / outputResolution.0
+                let wStrides = currentResolution[1] / outputResolution.1
+                
+                // Convert to NHWC for pooling operations in MLX Swift
+                let imgNHWC = img.transposed(0, 2, 3, 1)
+                
+                // Use MLX Swift's built-in average pooling
+                let poolingLayer = AvgPool2d(kernelSize: [hStrides, wStrides], stride: [hStrides, wStrides])
+                let pooled = poolingLayer(imgNHWC)
+                
+                img = pooled.transposed(0, 3, 1, 2)
+            }
+        }
+        
+        // Convert back to NHWC format for output
+        return img.transposed(0, 2, 3, 1)
     }
 }
 
