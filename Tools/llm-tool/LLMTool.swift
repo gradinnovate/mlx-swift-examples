@@ -316,7 +316,6 @@ struct EvaluateCommand: AsyncParsableCommand {
         
         let useVLM = vlm || hasMedia || modelSuggestsVLM
         
-        print("🔍 Debug: Using VLM=\(useVLM), hasMedia=\(hasMedia), images=\(media.image.count)")
         
         if useVLM {
             modelFactory = VLMModelFactory.shared
@@ -326,12 +325,10 @@ struct EvaluateCommand: AsyncParsableCommand {
             defaultModel = MLXLLM.LLMRegistry.mistral7B4bit
         }
 
-        print("🔍 Debug: Starting model loading...")
         // Load the model
         let modelContainer = try await memory.start { [args] in
             try await args.load(defaultModel: defaultModel.name, modelFactory: modelFactory)
         }
-        print("🔍 Debug: Model loaded successfully")
 
         // update the context/configuration with any command line parameters
         await modelContainer.update { [generate] context in
@@ -345,23 +342,17 @@ struct EvaluateCommand: AsyncParsableCommand {
             print("Loaded \(modelConfiguration.name)")
         }
 
-        print("🔍 Debug: Creating user input...")
         let userInput = self.userInput(modelConfiguration: modelConfiguration)
-        print("🔍 Debug: User input created with \(userInput.images.count) images")
 
         if !generate.quiet {
             print("Starting generation ...")
             print(userInput.prompt, terminator: " ")
         }
 
-        print("🔍 Debug: Starting model.perform...")
         let (result, _) = try await modelContainer.perform { [generate] context in
-            print("🔍 Debug: Inside model.perform, preparing input...")
             let input = try await context.processor.prepare(input: userInput)
-            print("🔍 Debug: Input prepared, starting generation...")
             return try await generate.generate(input: input, context: context)
         }
-        print("🔍 Debug: Generation completed!")
 
         // wait for any asynchronous cleanup, e.g. tearing down compiled functions
         // before the task exits -- this would race with mlx::core shutdown

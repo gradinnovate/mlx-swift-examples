@@ -28,7 +28,6 @@ private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArra
         return input
     }
     
-    print("🔍 Debug: nearestInterpolate from \(currentH)x\(currentW) to \(targetH)x\(targetW)")
     
     // For exact integer scaling, use repeat operations
     if targetH % currentH == 0 && targetW % currentW == 0 {
@@ -44,7 +43,6 @@ private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArra
             result = repeated(result, count: scaleW, axis: 3)
         }
         
-        print("🔍 Debug: Used optimized repeat - nearestInterpolate completed")
         return result
     }
     
@@ -87,7 +85,6 @@ private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArra
     // Stack all slices and reshape to final format
     let result = stacked(outputs, axis: 0).reshaped([batchSize, channels, targetH, targetW])
     
-    print("🔍 Debug: nearestInterpolate completed")
     return result
 }
 

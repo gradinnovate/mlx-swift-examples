@@ -160,11 +160,9 @@ public enum MediaProcessing {
     ///   - colorSpace: Optional color space for rendering
     /// - Returns: The MLXArray representation of the image
     public static func asMLXArray(_ image: CIImage, colorSpace: CGColorSpace? = nil) -> MLXArray {
-        print("🔍 Debug: Starting asMLXArray conversion...")
         let size = image.extent.size
         let w = Int(size.width.rounded())
         let h = Int(size.height.rounded())
-        print("🔍 Debug: Image size: \(w)x\(h)")
 
         // probably not strictly necessary, but this is what happens in
         // e.g. image_processing_siglip in transformers (float32)
@@ -173,28 +171,21 @@ public enum MediaProcessing {
         let bytesPerPixel = componentsPerPixel * 4
         let bytesPerRow = w * bytesPerPixel
 
-        print("🔍 Debug: Allocating data buffer...")
         var data = Data(count: w * h * bytesPerPixel)
-        print("🔍 Debug: Rendering CIImage to bitmap...")
         data.withUnsafeMutableBytes { ptr in
             context.render(
                 image, toBitmap: ptr.baseAddress!, rowBytes: bytesPerRow, bounds: image.extent,
                 format: format, colorSpace: colorSpace)
             context.clearCaches()
         }
-        print("🔍 Debug: CIImage rendered, creating MLXArray...")
 
         var array = MLXArray(data, [h, w, 4], type: Float32.self)
-        print("🔍 Debug: MLXArray created with shape: \(array.shape)")
 
         // Drop 4th channel
-        print("🔍 Debug: Dropping alpha channel...")
         array = array[0..., 0..., ..<3]
 
         // Convert to 1, C, H, W
-        print("🔍 Debug: Reshaping and transposing to [1, C, H, W]...")
         array = array.reshaped(1, h, w, 3).transposed(0, 3, 1, 2)
-        print("🔍 Debug: Final array shape: \(array.shape)")
 
         return array
     }
