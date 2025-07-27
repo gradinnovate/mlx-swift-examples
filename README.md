@@ -15,17 +15,17 @@ This fork has been extensively tested and optimized for the [`mlx-community/gemm
 
 ### Text Generation
 ```bash
-./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "Hello, how are you?" --vlm
+./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-it-4bit --prompt "Hello, how are you?" --vlm
 ```
 
 ### Vision-Language Generation
 ```bash
-./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "Describe this image" --image /path/to/image.jpg
+./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-it-4bit --prompt "Describe this image" --image /path/to/image.jpg
 ```
 
 ### Auto-VLM Mode (No --image flag needed)
 ```bash
-./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-4bit --vlm --prompt "What do you see?"
+./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-it-4bit --vlm --prompt "What do you see?"
 # Then provide image when prompted
 ```
 
@@ -60,7 +60,7 @@ Developers can use these examples in their own programs -- just import the swift
 ## 🔬 Tested Model
 
 This fork has been specifically tested and optimized for:
-- **Model**: [`mlx-community/gemma-3n-E2B-4bit`](https://huggingface.co/mlx-community/gemma-3n-E2B-4bit)
+- **Model**: [`mlx-community/gemma-3n-E2B-it-4bit`](https://huggingface.co/mlx-community/gemma-3n-E2B-it-4bit)
 - **Capabilities**: Text generation, image understanding, multimodal conversations
 - **Performance**: Optimized for Apple Silicon with MLX framework
 
