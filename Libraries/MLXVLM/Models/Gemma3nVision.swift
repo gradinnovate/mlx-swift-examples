@@ -305,10 +305,7 @@ private class ConvNormAct: Module {
         self._bn.wrappedValue = Gemma3nRMSNorm2d(numChannels: outChs, eps: eps, applyAct: applyAct)
         super.init()
 
-        if groups == 128, inChs == 128{
-            print("ConvNormAct: groups == 128")
-            print("ConvNormAct conv.weight.shape: \(self.conv.weight.shape)")
-        }
+        
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -353,7 +350,6 @@ private class UniversalInvertedResidual: Module, UnaryLayer {
         if dwKernelSizeStart > 0 {
             let dwStartStride = (dwKernelSizeMid == 0) ? stride : 1
             let dwStartGroups = numGroups(groupSize: groupSize, channels: inChs)
-            print("dwStartGroups: \(dwStartGroups)")
             self._dwStart.wrappedValue = ConvNormAct(
                 convCls: Conv2d.self,
                 inChs: inChs,
@@ -386,7 +382,6 @@ private class UniversalInvertedResidual: Module, UnaryLayer {
         
         if dwKernelSizeMid > 0 {
             let dwMidGroups = numGroups(groupSize: groupSize, channels: midChs)
-            print("dwMidGroups: \(dwMidGroups)")
             self._dwMid.wrappedValue = ConvNormAct(
                 convCls: Conv2dSame.self,
                 inChs: midChs,

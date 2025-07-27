@@ -78,7 +78,7 @@ public func loadWeights(
             }
         }
     }
-    printModelStructure(model: model)
+    //printModelStructure(model: model)
     // per-model cleanup
     weights = model.sanitize(weights: weights)
 

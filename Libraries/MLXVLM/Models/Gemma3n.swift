@@ -527,20 +527,15 @@ public class Gemma3nProcessor: UserInputProcessor {
                     }
                 }
                 promptTokens = expandedTokens
-                print("🔍 Debug: Expanded single image token to \(numImageTokens) tokens")
             } else {
                 print("⚠️ Warning: No image token found in prompt! Using tokens as-is.")
             }
             
-            print("🔍 Debug: Final prompt tokens count: \(promptTokens.count)")
         }
         
-        print("🔍 Debug: Creating prompt array...")
         let promptArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
         let mask = ones(like: promptArray).asType(.int8)
-        print("🔍 Debug: Prompt array shape: \(promptArray.shape)")
         
-        print("🔍 Debug: Returning LMInput...")
         return LMInput(
             text: .init(tokens: promptArray, mask: mask),
             image: processedImage

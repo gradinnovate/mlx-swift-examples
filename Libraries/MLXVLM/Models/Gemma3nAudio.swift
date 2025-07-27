@@ -517,7 +517,6 @@ private class Gemma3nAudioSSCPConvBlock: Module {
             useBias: false
         )
         super.init()
-        print("Gemma3nAudioSSCPConvBlock Conv parameter shape:", self.conv.weight.shape)
 
     }
     
