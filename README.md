@@ -56,19 +56,6 @@ Developers can use these examples in their own programs -- just import the swift
 - [MLXVLM](https://swiftpackageindex.com/ml-explore/mlx-swift-examples/main/documentation/mlxvlm) -- vision language model implementations
 - [MLXLLM](https://swiftpackageindex.com/ml-explore/mlx-swift-examples/main/documentation/mlxllm) -- large language model implementations
 
-## 🛠️ Available Tools & Applications
-
-### Command Line Tools
-- **[llm-tool](Tools/llm-tool/README.md)**: Enhanced with VLM support and Gemma-3n optimizations
-- **[image-tool](Tools/image-tool/README.md)**: Generate images using stable diffusion models  
-- **[mnist-tool](Tools/mnist-tool/README.md)**: Train LeNet on MNIST dataset
-- **[ExampleLLM](Tools/ExampleLLM/README.md)**: Simplified API for LLM interaction
-
-### Applications
-- **[VLMEval](Applications/VLMEval/README.md)**: iOS/macOS/visionOS VLM evaluation app
-- **[LLMEval](Applications/LLMEval/README.md)**: iOS/macOS LLM evaluation app
-- **[MLXChatExample](Applications/MLXChatExample/README.md)**: Chat app supporting both LLMs and VLMs
-- **[StableDiffusionExample](Applications/StableDiffusionExample/README.md)**: Image generation app
 
 ## 🔬 Tested Model
 
@@ -82,41 +69,12 @@ This fork has been specifically tested and optimized for:
 ### Building and Running
 ```bash
 # Build and run with debug output
-./mlx-run --debug llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "test"
+./mlx-run --debug llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "how are you?" --vlm
 
 # Build and run in release mode for best performance  
-./mlx-run --release llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "test"
+./mlx-run --release llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "how are you?" --vlm
 
-# List available build schemes
-./mlx-run --list
-```
 
-### Code Formatting
-```bash
-# Format all code
-swift-format format --in-place --recursive Libraries Tools Applications
-
-# Run pre-commit hooks
-pre-commit run --all-files
-```
-
-## 📦 Installation
-
-Add this fork as a dependency to your Package.swift:
-
-```swift
-.package(url: "https://github.com/your-username/mlx-swift-examples", branch: "main"),
-```
-
-Then add the libraries you need:
-
-```swift
-.target(
-    name: "YourTargetName",
-    dependencies: [
-        .product(name: "MLXVLM", package: "mlx-swift-examples"),
-        .product(name: "MLXLMCommon", package: "mlx-swift-examples")
-    ]),
 ```
 
 ## 🙏 Support
