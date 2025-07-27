@@ -16,7 +16,7 @@ private func to2Tuple<T>(_ x: T) -> (T, T) {
 }
 
 /// Nearest neighbor interpolation for upsampling feature maps
-/// Matches the behavior of Python MLX nearest_interpolate
+/// Optimized implementation using MLX Swift APIs
 private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArray {
     let (batchSize, channels, currentH, currentW) = (
         input.shape[0], input.shape[1], input.shape[2], input.shape[3]
@@ -28,11 +28,31 @@ private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArra
         return input
     }
     
-    // Calculate scale factors
+    print("🔍 Debug: nearestInterpolate from \(currentH)x\(currentW) to \(targetH)x\(targetW)")
+    
+    // For exact integer scaling, use repeat operations
+    if targetH % currentH == 0 && targetW % currentW == 0 {
+        let scaleH = targetH / currentH
+        let scaleW = targetW / currentW
+        
+        // Use repeated() free function from MLX Swift API
+        var result = input
+        if scaleH > 1 {
+            result = repeated(result, count: scaleH, axis: 2)
+        }
+        if scaleW > 1 {
+            result = repeated(result, count: scaleW, axis: 3)
+        }
+        
+        print("🔍 Debug: Used optimized repeat - nearestInterpolate completed")
+        return result
+    }
+    
+    // For non-integer scaling, use coordinate mapping
     let scaleH = Float(currentH) / Float(targetH)
     let scaleW = Float(currentW) / Float(targetW)
     
-    // Create coordinate grids for sampling
+    // Create coordinate arrays for target positions
     let yCoords = MLXArray(0..<targetH).asType(.float32) * scaleH
     let xCoords = MLXArray(0..<targetW).asType(.float32) * scaleW
     
@@ -40,31 +60,35 @@ private func nearestInterpolate(_ input: MLXArray, targetSize: [Int]) -> MLXArra
     let yIndices = clip(yCoords.asType(.int32), min: 0, max: currentH - 1)
     let xIndices = clip(xCoords.asType(.int32), min: 0, max: currentW - 1)
     
-    // Sample using advanced indexing
-    // Create meshgrid for sampling
-    let yGrid = broadcast(yIndices.expandedDimensions(axis: 1), to: [targetH, targetW])
-    let xGrid = broadcast(xIndices.expandedDimensions(axis: 0), to: [targetH, targetW])
-    
-    // Sample from the input tensor
-    var output = zeros([batchSize, channels, targetH, targetW], dtype: input.dtype)
+    // Use take() function with proper indexing
+    var outputs: [MLXArray] = []
     
     for b in 0..<batchSize {
         for c in 0..<channels {
-            let inputSlice = input[b, c, 0..., 0...]
-            var outputSlice = zeros([targetH, targetW], dtype: input.dtype)
+            let inputSlice = input[b, c]  // Shape: [currentH, currentW]
             
-            for h in 0..<targetH {
-                for w in 0..<targetW {
-                    let srcH = yIndices[h].item(Int.self)
-                    let srcW = xIndices[w].item(Int.self)
-                    outputSlice[h, w] = inputSlice[srcH, srcW]
-                }
-            }
-            output[b, c, 0..., 0...] = outputSlice
+            // Create meshgrid for coordinates
+            let yGrid = broadcast(yIndices.expandedDimensions(axis: 1), to: [targetH, targetW])
+            let xGrid = broadcast(xIndices.expandedDimensions(axis: 0), to: [targetH, targetW])
+            
+            // Convert 2D coordinates to flat indices
+            let flatIndices = yGrid * currentW + xGrid
+            
+            // Flatten input and use take() to gather values
+            let inputFlat = inputSlice.flattened()
+            let sampledFlat = take(inputFlat, flatIndices.flattened())
+            
+            // Reshape back to target size
+            let sampledSlice = sampledFlat.reshaped([targetH, targetW])
+            outputs.append(sampledSlice)
         }
     }
     
-    return output
+    // Stack all slices and reshape to final format
+    let result = stacked(outputs, axis: 0).reshaped([batchSize, channels, targetH, targetW])
+    
+    print("🔍 Debug: nearestInterpolate completed")
+    return result
 }
 
 private func numGroups(groupSize: Int?, channels: Int) -> Int {

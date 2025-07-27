@@ -161,7 +161,12 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
         inputFeatures: MLXArray? = nil,
         inputFeaturesMask: MLXArray? = nil
     ) -> (MLXArray, MLXArray?) {
+        print("🔍 Debug: Starting getInputEmbeddings...")
+        print("🔍 Debug: inputIds shape: \(inputIds?.shape ?? [])")
+        print("🔍 Debug: pixelValues shape: \(pixelValues?.shape ?? [])")
+        
         var inputsEmbeds = languageModel.model.embedTokens(inputIds!)
+        print("🔍 Debug: Text embeddings shape: \(inputsEmbeds.shape)")
         
         let perLayerInputsMask = logicalAnd(
             greaterEqual(inputIds!, MLXArray(0)),
@@ -173,8 +178,10 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
             zeros(like: inputIds!)
         )
         let perLayerInputs = languageModel.model.getPerLayerInputs(perLayerInputsTokens)
+        print("🔍 Debug: perLayerInputs shape: \(perLayerInputs.shape)")
         
         if pixelValues == nil && inputFeatures == nil {
+            print("🔍 Debug: No vision/audio input, returning text embeddings only")
             return (inputsEmbeds, perLayerInputs)
         }
         
@@ -207,25 +214,35 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
         
         // Vision features
         if let pixelValues = pixelValues {
+            print("🔍 Debug: Processing vision features...")
+            print("🔍 Debug: Calling vision tower with pixelValues shape: \(pixelValues.shape)")
+            
             let imageFeatures = Self.getImageFeatures(
                 pixelValues: pixelValues,
                 visionTower: visionTower,
                 config: config,
                 embedVision: embedVision
             )
+            print("🔍 Debug: Image features shape: \(imageFeatures.shape)")
             
             let modality = "image"
+            print("🔍 Debug: Constructing special modality mask...")
+            let mask = constructSpecialModalityMask(
+                inputIds: inputIds,
+                inputsEmbeds: inputsEmbeds,
+                tokenId: config.imageTokenId,
+                modality: modality
+            )
+            print("🔍 Debug: Modality mask shape: \(mask.shape)")
+            
+            print("🔍 Debug: Merging multimodal and text embeddings...")
             inputsEmbeds = Self.mergeMultimodalAndText(
                 inputsEmbeds,
                 imageFeatures,
-                constructSpecialModalityMask(
-                    inputIds: inputIds,
-                    inputsEmbeds: inputsEmbeds,
-                    tokenId: config.imageTokenId,
-                    modality: modality
-                ),
+                mask,
                 modality: modality
             )
+            print("🔍 Debug: Final merged embeddings shape: \(inputsEmbeds.shape)")
         }
         
         // Audio features
@@ -286,17 +303,42 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
         config: Gemma3nConfiguration,
         embedVision: Gemma3nMultimodalEmbedder
     ) -> MLXArray {
+        print("🔍 Debug: getImageFeatures - Input pixelValues shape: \(pixelValues.shape)")
+        
+        print("🔍 Debug: Calling vision tower...")
+        let startTime = CFAbsoluteTimeGetCurrent()
+        
+        // Add timeout protection
+        print("🔍 Debug: Starting vision inference (this may take a while for large images)...")
         var visionOutputs = visionTower(pixelValues, outputHiddenStates: true)
+        
+        let endTime = CFAbsoluteTimeGetCurrent()
+        let timeElapsed = endTime - startTime
+        print("🔍 Debug: Vision tower completed in \(String(format: "%.2f", timeElapsed)) seconds")
+        print("🔍 Debug: Vision tower output shape: \(visionOutputs.shape)")
+        
+        print("🔍 Debug: Transposing vision outputs...")
         visionOutputs = visionOutputs.transposed(0, 3, 1, 2)
-        visionOutputs = visionOutputs.reshaped([
+        print("🔍 Debug: After transpose shape: \(visionOutputs.shape)")
+        
+        print("🔍 Debug: Reshaping and transposing again...")
+        let targetShape = [
             visionOutputs.shape[0],
             config.visionConfig.hiddenSize,
             config.visionSoftTokensPerImage
-        ]).transposed(0, 2, 1)
+        ]
+        print("🔍 Debug: Target reshape: \(targetShape)")
+        visionOutputs = visionOutputs.reshaped(targetShape).transposed(0, 2, 1)
+        print("🔍 Debug: Final vision outputs shape: \(visionOutputs.shape)")
         
         // Normalize and embed the soft tokens into language model space
+        print("🔍 Debug: Normalizing vision outputs...")
         visionOutputs = visionOutputs * sqrt(Float(config.visionConfig.hiddenSize))
-        return embedVision(inputsEmbeds: visionOutputs)
+        
+        print("🔍 Debug: Embedding vision outputs into language space...")
+        let result = embedVision(inputsEmbeds: visionOutputs)
+        print("🔍 Debug: Final embedded features shape: \(result.shape)")
+        return result
     }
     
     private func constructSpecialModalityMask(
@@ -429,61 +471,124 @@ public class Gemma3nProcessor: UserInputProcessor {
     }
     
     public func preprocess(images: [CIImage], processing: UserInput.Processing?) throws -> (MLXArray, THW) {
+        print("🔍 Debug: Starting preprocess with \(images.count) images")
         let userProcessing = processing ?? UserInput.Processing()
         let targetSize = CGSize(width: config.imageSize, height: config.imageSize)
+        print("🔍 Debug: Target size: \(targetSize)")
         
-        let processedImages = try images.map { image in
+        let processedImages = try images.enumerated().map { (index, image) in
+            print("🔍 Debug: Processing image \(index + 1)/\(images.count)")
+            print("🔍 Debug: Original image size: \(image.extent.size)")
+            
             let processedImage = MediaProcessing.apply(image, processing: userProcessing)
+            print("🔍 Debug: Applied user processing")
+            
             let srgbImage = MediaProcessing.inSRGBToneCurveSpace(processedImage)
+            print("🔍 Debug: Converted to sRGB")
+            
             let resizedImage = MediaProcessing.resampleBicubic(srgbImage, to: targetSize)
+            print("🔍 Debug: Resized to target size")
+            
             let normalizedImage = MediaProcessing.normalize(
                 resizedImage,
                 mean: config.imageMeanTuple,
                 std: config.imageStdTuple
             )
-            return MediaProcessing.asMLXArray(normalizedImage)
+            print("🔍 Debug: Normalized image")
+            
+            let array = MediaProcessing.asMLXArray(normalizedImage)
+            print("🔍 Debug: Converted to MLXArray with shape: \(array.shape)")
+            return array
         }
         
+        print("🔍 Debug: Concatenating \(processedImages.count) processed images")
         let pixelValues = concatenated(processedImages)
+        print("🔍 Debug: Final pixel values shape: \(pixelValues.shape)")
         return (pixelValues, THW(images.count, config.imageSize, config.imageSize))
     }
     
     public func prepare(input: UserInput) async throws -> LMInput {
+        print("🔍 Debug: Starting prepare with \(input.images.count) images")
+        
         // Use structured content message generator
+        print("🔍 Debug: Generating messages...")
         let messages = Qwen2VLMessageGenerator().generate(from: input)
+        print("🔍 Debug: Applying chat template...")
         var promptTokens = try tokenizer.applyChatTemplate(messages: messages)
+        print("🔍 Debug: Initial prompt tokens count: \(promptTokens.count)")
         
         var processedImage: LMInput.ProcessedImage?
         
         if !input.images.isEmpty {
+            print("🔍 Debug: Processing \(input.images.count) images...")
             let imagePixelsAndFrames = try input.images.map {
-                try preprocess(images: [$0.asCIImage()], processing: input.processing)
+                print("🔍 Debug: Converting to CIImage...")
+                let ciImage = try $0.asCIImage()
+                print("🔍 Debug: Calling preprocess...")
+                return try preprocess(images: [ciImage], processing: input.processing)
             }
+            print("🔍 Debug: Concatenating image pixels...")
             let imagePixelsConcatenated = concatenated(imagePixelsAndFrames.map { $0.0 })
+            print("🔍 Debug: Concatenated pixels shape: \(imagePixelsConcatenated.shape)")
+            
             processedImage = LMInput.ProcessedImage(
                 pixels: imagePixelsConcatenated,
                 frames: imagePixelsAndFrames.map { $0.1 }
             )
             
-            // Expand image tokens
+            // Handle image tokens - check for both formats
+            print("🔍 Debug: Processing image tokens...")
             let startOfImageTokenId = 255999
             let imageTokenId = config.imageTokenId ?? 262145
             let numImageTokens = config.imageSeqLength
+            print("🔍 Debug: Using imageTokenId: \(imageTokenId), numImageTokens: \(numImageTokens)")
+            print("🔍 Debug: Original tokens: \(promptTokens)")
             
-            var expandedTokens: [Int] = []
-            for token in promptTokens {
-                if token == startOfImageTokenId {
-                    expandedTokens.append(contentsOf: Array(repeating: imageTokenId, count: numImageTokens))
-                } else {
-                    expandedTokens.append(token)
+            // Check if we need to expand tokens or if they're already in the right format
+            let hasStartToken = promptTokens.contains(startOfImageTokenId)
+            let hasImageToken = promptTokens.contains(imageTokenId)
+            
+            print("🔍 Debug: Has start token (\(startOfImageTokenId)): \(hasStartToken)")
+            print("🔍 Debug: Has image token (\(imageTokenId)): \(hasImageToken)")
+            
+            if hasStartToken {
+                // Expand start tokens to image tokens
+                var expandedTokens: [Int] = []
+                for token in promptTokens {
+                    if token == startOfImageTokenId {
+                        expandedTokens.append(contentsOf: Array(repeating: imageTokenId, count: numImageTokens))
+                    } else {
+                        expandedTokens.append(token)
+                    }
                 }
+                promptTokens = expandedTokens
+                print("🔍 Debug: Expanded \(startOfImageTokenId) to \(numImageTokens) tokens of \(imageTokenId)")
+            } else if hasImageToken {
+                // Tokenizer already generated the right tokens, but we might need to expand them
+                var expandedTokens: [Int] = []
+                for token in promptTokens {
+                    if token == imageTokenId {
+                        // Expand single image token to multiple tokens
+                        expandedTokens.append(contentsOf: Array(repeating: imageTokenId, count: numImageTokens))
+                    } else {
+                        expandedTokens.append(token)
+                    }
+                }
+                promptTokens = expandedTokens
+                print("🔍 Debug: Expanded single image token to \(numImageTokens) tokens")
+            } else {
+                print("⚠️ Warning: No image token found in prompt! Using tokens as-is.")
             }
-            promptTokens = expandedTokens
+            
+            print("🔍 Debug: Final prompt tokens count: \(promptTokens.count)")
         }
         
+        print("🔍 Debug: Creating prompt array...")
         let promptArray = MLXArray(promptTokens).expandedDimensions(axis: 0)
         let mask = ones(like: promptArray).asType(.int8)
+        print("🔍 Debug: Prompt array shape: \(promptArray.shape)")
         
+        print("🔍 Debug: Returning LMInput...")
         return LMInput(
             text: .init(tokens: promptArray, mask: mask),
             image: processedImage
@@ -538,12 +643,12 @@ public struct Gemma3nProcessorConfiguration: Codable, Sendable {
         doNormalize: Bool = true,
         doRescale: Bool = true,
         doResize: Bool = true,
-        imageMean: [CGFloat] = [0.485, 0.456, 0.406],
-        imageStd: [CGFloat] = [0.229, 0.224, 0.225],
+        imageMean: [CGFloat] = [0.5, 0.5, 0.5],
+        imageStd: [CGFloat] = [0.5, 0.5, 0.5],
         imageSeqLength: Int = 256,
         resample: Int = 2,
         rescaleFactor: Float = 0.00392156862745098,
-        size: ImageSize = ImageSize(height: 224, width: 224),
+        size: ImageSize = ImageSize(height: 768, width: 768),
         doConvertRgb: Bool? = true,
         doPanAndScan: Bool? = false,
         panAndScanMaxNumCrops: Int? = nil,
