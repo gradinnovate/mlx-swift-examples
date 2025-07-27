@@ -287,8 +287,23 @@ public class VLMModelFactory: ModelFactory {
             configuration: processorConfigurationURL,
             processorType: baseProcessorConfig.processorClass, tokenizer: tokenizer)
 
+        // Auto-configure eos_token_id from model config as extraEOSTokens
+        var finalConfiguration = configuration
+        if let gemma3nModel = model as? Gemma3n,
+           let eosTokenIds = gemma3nModel.config.eosTokenId {
+            for tokenId in eosTokenIds {
+                do {
+                    let tokenString = try tokenizer.decode(tokens: [tokenId])
+                    finalConfiguration.extraEOSTokens.insert(tokenString)
+                } catch {
+                    // Skip tokens that can't be decoded
+                    print("Warning: Could not decode token ID \(tokenId): \(error)")
+                }
+            }
+        }
+
         return .init(
-            configuration: configuration, model: model, processor: processor, tokenizer: tokenizer)
+            configuration: finalConfiguration, model: model, processor: processor, tokenizer: tokenizer)
     }
 
 }
