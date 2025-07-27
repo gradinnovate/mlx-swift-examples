@@ -26,7 +26,7 @@ public class Gemma3nRMSNorm: Module {
         self.eps = eps
         self.scaleShift = scaleShift        
         self._weight.wrappedValue = ones([dimensions])
-       
+        super.init()
     }
     
     private func norm(_ x: MLXArray) -> MLXArray {
@@ -53,6 +53,7 @@ public class Gemma3nRMSNormNoWeight: Module {
     ) {
         self.dimensions = dimensions
         self.eps = eps
+        super.init()
     }
     
     private func norm(_ x: MLXArray) -> MLXArray {
@@ -71,6 +72,7 @@ private class RMSNoScale: Module {
     
     init(eps: Float = 1e-5) {
         self.eps = eps
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -100,6 +102,7 @@ public class Gemma3nLaurelBlock: Module {
             dimensions: config.hiddenSize,
             eps: config.rmsNormEps
         )
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -160,6 +163,7 @@ public class Gemma3nAttention: Module {
             traditional: config.ropeTraditional ?? false,
             base: baseFreq
         )
+        super.init()
     }
     
     func callAsFunction(
@@ -250,7 +254,7 @@ public class Gemma3nMLP: Module {
     
     let config: Gemma3nTextConfiguration
     let activationSparsity: Float
-    let stdMultiplier: MLXArray?
+    let _stdMultiplier: MLXArray?
     
     init(config: Gemma3nTextConfiguration, layerIdx: Int = 0) {
         self.config = config
@@ -270,17 +274,18 @@ public class Gemma3nMLP: Module {
         
         if activationSparsity > 0 {
             let value = sqrt(2.0) * erfInverse(MLXArray(2 * activationSparsity - 1))
-            self.stdMultiplier = value
+            self._stdMultiplier = value
         } else {
-            self.stdMultiplier = nil
+            self._stdMultiplier = nil
         }
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let gateProj = self.gateProj(x)
         let activations: MLXArray
         
-        if activationSparsity > 0.0, let stdMultiplier = stdMultiplier {
+        if activationSparsity > 0.0, let stdMultiplier = _stdMultiplier {
             activations = geluTopK(gateProj, stdMultiplier)
         } else {
             activations = geluApproximate(gateProj)
@@ -321,6 +326,7 @@ public class Gemma3nAltUp: Module {
             dimensions: config.hiddenSize,
             eps: config.rmsNormEps
         )
+        super.init()
     }
     
     func computeRouterModalities(_ x: MLXArray) -> MLXArray {
@@ -441,9 +447,7 @@ public class Gemma3nDecoderLayer: Module {
             dimensions: hiddenSize, eps: config.rmsNormEps
         )
         
-        
-        
-        
+        super.init()
     }
     
     func callAsFunction(
@@ -717,8 +721,8 @@ public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
         self.config = config
         self.finalLogitSoftcapping = config.finalLogitSoftcapping
         self.kvHeads = Array(repeating: config.numKeyValueHeads, count: config.numHiddenLayers)
+        self._model.wrappedValue = Gemma3Model(config)
         super.init()
-        self.model = Gemma3Model(config)
     }
     
     public func newCache(parameters: GenerateParameters?) -> [any KVCache] {
@@ -761,12 +765,21 @@ public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
     }
     
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
-        let sanitizedWeights: [String: MLXArray] = [:]
+        var sanitizedWeights: [String: MLXArray] = [:]
+        
+        for (k, v) in weights {
+            if !k.starts(with: "language_model") {
+                sanitizedWeights[k] = v
+                continue
+            }
+            print("Key: \(k), Shape: \(v.shape)")
+        }
         
         return sanitizedWeights
     }
 }
 
+//TODO: use helper functions from KVCache implementation
 // Helper function to create attention mask
 private func createAttentionMask(h: MLXArray, cache: [KVCache]) -> MLXArray? {
     // Implementation should create appropriate causal mask

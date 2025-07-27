@@ -16,12 +16,16 @@ private func to2Tuple<T>(_ x: T) -> (T, T) {
 }
 
 private func numGroups(groupSize: Int?, channels: Int) -> Int {
-    guard let groupSize = groupSize, groupSize > 0 else {
+    if groupSize == nil || groupSize == 0 {
         return 1  // Normal conv with 1 group
     }
-    // NOTE: groupSize == 1 -> depthwise conv
-    assert(channels % groupSize == 0)
-    return channels / groupSize
+    else if let groupSize = groupSize, groupSize == 1 {
+        return channels // Depthwise conv
+    }
+    else {
+        return channels
+    }
+    
 }
 
 private func makeDivisible(_ v: Int, divisor: Int = 8, minValue: Int? = nil, roundLimit: Float = 0.9) -> Int {
@@ -49,6 +53,7 @@ public class Gemma3nRMSNorm2d: Module {
         self.applyAct = applyAct
         
         self._weight.wrappedValue = ones([numChannels])
+        super.init()
     }
     
     private func rmsNorm2d(
@@ -97,6 +102,7 @@ private class LayerScale2d: Module {
     init(dim: Int, initValues: Float = 1e-5, inplace: Bool = false) {
         self.inplace = inplace
         self._gamma.wrappedValue = MLXArray(initValues) * ones([dim])
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -172,7 +178,6 @@ private class Conv2dSame: Conv2d {
             bias: bias
         )
         
-        
     }
     
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -225,6 +230,12 @@ private class ConvNormAct: Module {
         }
         
         self._bn.wrappedValue = Gemma3nRMSNorm2d(numChannels: outChs, eps: eps, applyAct: applyAct)
+        super.init()
+
+        if groups == 128, inChs == 128{
+            print("ConvNormAct: groups == 128")
+            print("ConvNormAct conv.weight.shape: \(self.conv.weight.shape)")
+        }
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -269,6 +280,7 @@ private class UniversalInvertedResidual: Module, UnaryLayer {
         if dwKernelSizeStart > 0 {
             let dwStartStride = (dwKernelSizeMid == 0) ? stride : 1
             let dwStartGroups = numGroups(groupSize: groupSize, channels: inChs)
+            print("dwStartGroups: \(dwStartGroups)")
             self._dwStart.wrappedValue = ConvNormAct(
                 convCls: Conv2d.self,
                 inChs: inChs,
@@ -301,6 +313,7 @@ private class UniversalInvertedResidual: Module, UnaryLayer {
         
         if dwKernelSizeMid > 0 {
             let dwMidGroups = numGroups(groupSize: groupSize, channels: midChs)
+            print("dwMidGroups: \(dwMidGroups)")
             self._dwMid.wrappedValue = ConvNormAct(
                 convCls: Conv2dSame.self,
                 inChs: midChs,
@@ -335,6 +348,7 @@ private class UniversalInvertedResidual: Module, UnaryLayer {
         } else {
             self._layerScale.wrappedValue = nil
         }
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -423,6 +437,7 @@ private class EdgeResidual: Module, UnaryLayer {
         )
         
         self._bn2.wrappedValue = Gemma3nRMSNorm2d(numChannels: outChs, eps: 1e-05, applyAct: false)
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -479,6 +494,7 @@ private class QuerySequence: Module {
                 bias: bias
             )
         }
+        super.init()
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -488,7 +504,7 @@ private class QuerySequence: Module {
 
 private class KeySequence: Module {
     @ModuleInfo(key: "down_conv") var downConv: Conv2d?
-    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d?
     @ModuleInfo(key: "proj") var proj: Conv2d
 
     init(
@@ -516,19 +532,20 @@ private class KeySequence: Module {
                 groups: inputChannels,
                 bias: false
             )
+            self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: numChannels, eps: eps, applyAct: applyAct)
+
         } else {
             self._downConv.wrappedValue = nil
+            self._norm.wrappedValue = nil
         }
         
-        self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: numChannels, eps: eps, applyAct: applyAct)
         self._proj.wrappedValue = Conv2d(
             inputChannels: inputChannels,
             outputChannels: keyDim,
             kernelSize: IntOrPair(1),
             bias: false
         )
-        
-        
+        super.init()
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -537,8 +554,9 @@ private class KeySequence: Module {
         if let downConv = downConv {
             result = downConv(result)
         }
-        
-        result = norm(result)
+        if let norm = norm {
+            result = norm(result)
+        }
         result = proj(result)
         
         return result
@@ -547,7 +565,7 @@ private class KeySequence: Module {
 
 private class ValueSequence: Module {
     @ModuleInfo(key: "down_conv") var downConv: Conv2d?
-    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d
+    @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm2d?
     @ModuleInfo(key: "proj") var proj: Conv2d
 
     init(
@@ -574,17 +592,19 @@ private class ValueSequence: Module {
                 groups: inputChannels,
                 bias: false
             )
+            self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: numChannels, eps: eps, applyAct: applyAct)
+
         } else {
             self._downConv.wrappedValue = nil
         }
         
-        self._norm.wrappedValue = Gemma3nRMSNorm2d(numChannels: numChannels, eps: eps, applyAct: applyAct)
         self._proj.wrappedValue = Conv2d(
             inputChannels: inputChannels,
             outputChannels: valueDim,
             kernelSize: IntOrPair(1),
             bias: false
         )
+        super.init()
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -593,8 +613,9 @@ private class ValueSequence: Module {
         if let downConv = downConv {
             result = downConv(result)
         }
-        
-        result = norm(result)
+        if let norm = norm {
+            result = norm(result)
+        }
         result = proj(result)
         
         return result
@@ -619,6 +640,7 @@ private class OutputSequence: Module {
         )
         
         self.projDrop = Dropout(p: projDrop)
+        super.init()
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -708,6 +730,7 @@ private class MultiQueryAttention2d: Module {
             outputChannels: dimOut,
             projDrop: projDrop
         )
+        super.init()
     }
     
     private func reshapeInput(_ t: MLXArray) -> MLXArray {
@@ -831,6 +854,7 @@ private class MobileAttention: Module, UnaryLayer {
         } else {
             self._layerScale.wrappedValue = nil
         }
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -900,6 +924,7 @@ private class MobileNetV5MultiScaleFusionAdapter: Module {
         
         // Note: Pooling logic would be handled in MediaProcessing during preprocessing
         // following the critical guideline
+        super.init()
     }
     
     func callAsFunction(_ inputs: [MLXArray]) -> MLXArray {
@@ -967,6 +992,7 @@ private class VisionTower: Module {
             outChs: 2048,
             outputResolution: msfaOutputResolution.0
         )
+        super.init()
     }
     
     private static func buildBlocks() -> (Int, [[Module]]) {
@@ -1069,6 +1095,7 @@ public class Gemma3nVisionModel: Module {
         }
         
         self._timmModel.wrappedValue = VisionTower(config: config)
+        super.init()
     }
     
     public func callAsFunction(_ x: MLXArray, outputHiddenStates: Bool? = nil) -> MLXArray {
@@ -1088,6 +1115,11 @@ public class Gemma3nVisionModel: Module {
         }
         
         for (k, v) in weights {
+            if !k.starts(with: "vision_tower") {
+                sanitizedWeights[k] = v
+                continue
+            }
+            print("Key: \(k), Shape: \(v.shape)")
             // PyTorch conv2d weight: [out_channels, in_channels, kH, kW]
             // MLX conv2d weight: [out_channels, kH, kW, in_channels]
             if (k.contains("conv") && k.contains("weight")) || (k.contains("attn") && k.contains("proj.weight")) {

@@ -35,7 +35,7 @@ private func convertTorchToMLXPadWidth(_ padding: [Int], _ inputShape: [Int]) ->
 
 private class Gemma3nAudioRelativePositionEmbedding: Module {
     @ModuleInfo(key: "pos_proj") var posProj: Linear
-    let invTimescales: MLXArray
+    let _invTimescales: MLXArray
     
     let config: Gemma3nAudioConfiguration
     let numHeads: Int
@@ -62,18 +62,19 @@ private class Gemma3nAudioRelativePositionEmbedding: Module {
         let numTimescales = channels / 2
         let logTimescaleIncrement = log(maxTimescale / minTimescale) / max(Float(numTimescales - 1), 1)
         
-        let invTimescales = minTimescale * exp(
+        let invTimescalesExp = minTimescale * exp(
             MLXArray(0..<numTimescales).asType(.float32) * (-logTimescaleIncrement)
         )
         
-        self.invTimescales = invTimescales.expandedDimensions(axis: 0).expandedDimensions(axis: 0)
+        self._invTimescales = invTimescalesExp.expandedDimensions(axis: 0).expandedDimensions(axis: 0)
+        super.init()
     }
     
     private func getTimingSignal1dPos(_ position: MLXArray, dtype: DType) -> MLXArray {
         assert(position.ndim == 2)
         let position = position.expandedDimensions(axis: -1).asType(.float32)
         
-        let scaledTime = position * invTimescales
+        let scaledTime = position * _invTimescales
         let timingSignal = concatenated([sin(scaledTime), cos(scaledTime)], axis: -1)
         return timingSignal.asType(dtype)
     }
@@ -169,8 +170,8 @@ private class Gemma3nAudioAttention: Module {
     @ModuleInfo(key: "v_proj") var vProj: Linear
     @ModuleInfo(key: "relative_position_embedding") var relativePositionEmbedding: Gemma3nAudioRelativePositionEmbedding
     @ParameterInfo(key: "per_dim_scale") var perDimScale: MLXArray
-    let localCausalValidMask: MLXArray
-    let softcap: MLXArray
+    let _localCausalValidMask: MLXArray
+    let _softcap: MLXArray
     
     let config: Gemma3nAudioConfiguration
     let numHeads: Int
@@ -223,13 +224,14 @@ private class Gemma3nAudioAttention: Module {
             k: maxPastHorizon + maxFutureHorizon
         )
         
-        let localCausalValidMask = MLXArray.ones([chunkSize, contextSize], type: Bool.self)
-        self.localCausalValidMask = logicalAnd(
-            logicalAnd(localCausalValidMask, lowerCausalMask),
+        let localCausalValidMaskOnes = MLXArray.ones([chunkSize, contextSize], type: Bool.self)
+        self._localCausalValidMask = logicalAnd(
+            logicalAnd(localCausalValidMaskOnes, lowerCausalMask),
             upperCausalMask
         )
         
-        self.softcap = MLXArray(attentionLogitsSoftCap)
+        self._softcap = MLXArray(attentionLogitsSoftCap)
+        super.init()
     }
     
     private func padDim1(
@@ -334,7 +336,7 @@ private class Gemma3nAudioAttention: Module {
             .expandedDimensions(axis: 1)
             .expandedDimensions(axis: -2)
         
-        let conditionFromCausality = localCausalValidMask
+        let conditionFromCausality = _localCausalValidMask
             .expandedDimensions(axis: 0)
             .expandedDimensions(axis: 0)
             .expandedDimensions(axis: 0)
@@ -348,9 +350,9 @@ private class Gemma3nAudioAttention: Module {
         let logits = relativePositionEmbedding(queryBlocks, keyBlocks)
         
         // Apply softcapping
-        var cappedLogits = logits / softcap
+        var cappedLogits = logits / _softcap
         cappedLogits = tanh(cappedLogits)
-        cappedLogits = cappedLogits * softcap
+        cappedLogits = cappedLogits * _softcap
         
         // Apply mask
         let maskedLogits = MLX.where(
@@ -412,6 +414,7 @@ private class Gemma3nCumulativeGroupNorm: Module {
         self._weight.wrappedValue = ones([numChannels])
         
         self.reductionAxes = Array(2..<(2 + featureDims.count + 1))
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray, mask: MLXArray? = nil) -> MLXArray {
@@ -513,6 +516,9 @@ private class Gemma3nAudioSSCPConvBlock: Module {
             useScale: true,
             useBias: false
         )
+        super.init()
+        print("Gemma3nAudioSSCPConvBlock Conv parameter shape:", self.conv.weight.shape)
+
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -582,6 +588,7 @@ private class Gemma3nAudioSubSampleConvProjection: Module {
         self._inputProjLinear.wrappedValue = Linear(
             inputProjInFeatures, config.hiddenSize, bias: false
         )
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -606,7 +613,7 @@ private class Gemma3nAudioConformerAttention: Module {
     @ModuleInfo(key: "post_norm") var postNorm: Gemma3nRMSNorm
     
     let config: Gemma3nAudioConfiguration
-    let gradientClipping: MLXArray
+    let _gradientClipping: MLXArray
     
     init(config: Gemma3nAudioConfiguration) {
         self.config = config
@@ -614,17 +621,18 @@ private class Gemma3nAudioConformerAttention: Module {
         let headDim = config.hiddenSize / config.confNumAttentionHeads
         let postInFeatures = config.hiddenSize
         
-        self.gradientClipping = MLXArray(config.gradientClipping)
+        self._gradientClipping = MLXArray(config.gradientClipping)
         
         self._preAttnNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
         self._attn.wrappedValue = Gemma3nAudioAttention(config: config)
         self._post.wrappedValue = Linear(postInFeatures, config.hiddenSize, bias: false)
         self._postNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
         let audioEncodingsInputToAttn = x
-        let clippedX = clip(x, min: -gradientClipping, max: gradientClipping)
+        let clippedX = clip(x, min: -_gradientClipping, max: _gradientClipping)
         let audioEncodingsNorm = preAttnNorm(clippedX)
         let audioEncodingsAttnOut = attn(audioEncodingsNorm, mask: mask)
         
@@ -635,7 +643,7 @@ private class Gemma3nAudioConformerAttention: Module {
         let audioEncodingsReshaped = audioEncodingsAttnOut.reshaped([b, t, numHeads * headDim])
         
         let postResult = post(audioEncodingsReshaped)
-        let clippedPost = clip(postResult, min: -gradientClipping, max: gradientClipping)
+        let clippedPost = clip(postResult, min: -_gradientClipping, max: _gradientClipping)
         
         return audioEncodingsInputToAttn + postNorm(clippedPost)
     }
@@ -650,32 +658,33 @@ private class Gemma3nAudioConformerFeedForward: Module {
     @ModuleInfo(key: "post_layer_norm") var postLayerNorm: Gemma3nRMSNorm
     
     let config: Gemma3nAudioConfiguration
-    let gradientClipping: MLXArray
-    let postLayerScale: MLXArray
+    let _gradientClipping: MLXArray
+    let _postLayerScale: MLXArray
     
     init(config: Gemma3nAudioConfiguration) {
         self.config = config
         
-        self.gradientClipping = MLXArray(config.gradientClipping)
+        self._gradientClipping = MLXArray(config.gradientClipping)
         
         self._preLayerNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
         self._ffwLayer1.wrappedValue = Linear(config.hiddenSize, config.hiddenSize * 4, bias: false)
         self._ffwLayer2.wrappedValue = Linear(config.hiddenSize * 4, config.hiddenSize, bias: false)
         self._postLayerNorm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
-        self.postLayerScale = MLXArray(config.confResidualWeight)
+        self._postLayerScale = MLXArray(config.confResidualWeight)
+        super.init()
     }
     
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let residual = x
-        let clippedX = clip(x, min: -gradientClipping, max: gradientClipping)
+        let clippedX = clip(x, min: -_gradientClipping, max: _gradientClipping)
         var result = preLayerNorm(clippedX)
         result = ffwLayer1(result)
         result = silu(result)
         result = ffwLayer2(result)
-        result = clip(result, min: -gradientClipping, max: gradientClipping)
+        result = clip(result, min: -_gradientClipping, max: _gradientClipping)
         result = postLayerNorm(result)
         
-        return residual + (result * postLayerScale)
+        return residual + (result * _postLayerScale)
     }
 }
 
@@ -689,7 +698,7 @@ private class Gemma3nAudioConformerLightConv1d: Module {
     @ModuleInfo(key: "linear_end") var linearEnd: Linear
     
     let config: Gemma3nAudioConfiguration
-    let gradientClipping: MLXArray
+    let _gradientClipping: MLXArray
     let causalPadding: Int
     
     init(config: Gemma3nAudioConfiguration) {
@@ -710,7 +719,7 @@ private class Gemma3nAudioConformerLightConv1d: Module {
             groups: config.hiddenSize,
             bias: false
         )
-        self.gradientClipping = MLXArray(config.gradientClipping)
+        self._gradientClipping = MLXArray(config.gradientClipping)
         self._convNorm.wrappedValue = Gemma3nRMSNorm(
             dimensions: config.hiddenSize, eps: config.rmsNormEps
         )
@@ -719,6 +728,7 @@ private class Gemma3nAudioConformerLightConv1d: Module {
         )
         
         self.causalPadding = config.confConvKernelSize - 1
+        super.init()
     }
     
     func callAsFunction(_ audioEncodings: MLXArray) -> MLXArray {
@@ -734,7 +744,7 @@ private class Gemma3nAudioConformerLightConv1d: Module {
         let resultPadded = padded(result, widths: padWidths, mode: .constant)
         
         result = depthwiseConv1d(resultPadded)
-        result = clip(result, min: -gradientClipping, max: gradientClipping)
+        result = clip(result, min: -_gradientClipping, max: _gradientClipping)
         result = convNorm(result)
         result = silu(result)
         result = linearEnd(result)
@@ -753,7 +763,7 @@ private class Gemma3nAudioConformerBlock: Module {
     @ModuleInfo(key: "norm") var norm: Gemma3nRMSNorm
     
     let config: Gemma3nAudioConfiguration
-    let gradientClipping: MLXArray
+    let _gradientClipping: MLXArray
     
     init(config: Gemma3nAudioConfiguration) {
         self.config = config
@@ -762,8 +772,9 @@ private class Gemma3nAudioConformerBlock: Module {
         self._attention.wrappedValue = Gemma3nAudioConformerAttention(config: config)
         self._lconv1d.wrappedValue = Gemma3nAudioConformerLightConv1d(config: config)
         self._ffwLayerEnd.wrappedValue = Gemma3nAudioConformerFeedForward(config: config)
-        self.gradientClipping = MLXArray(config.gradientClipping)
+        self._gradientClipping = MLXArray(config.gradientClipping)
         self._norm.wrappedValue = Gemma3nRMSNorm(dimensions: config.hiddenSize)
+        super.init()
     }
     
     func callAsFunction(_ audioEncodings: MLXArray, _ audioMelMask: MLXArray) -> MLXArray {
@@ -776,7 +787,7 @@ private class Gemma3nAudioConformerBlock: Module {
         
         result = lconv1d(audioEncodingsForLconvInput)
         result = ffwLayerEnd(result)
-        result = clip(result, min: -gradientClipping, max: gradientClipping)
+        result = clip(result, min: -_gradientClipping, max: _gradientClipping)
         
         return norm(result)
     }
@@ -797,6 +808,7 @@ public class Gemma3nAudioModel: Module {
         self._conformer.wrappedValue = (0..<config.confNumHiddenLayers).map { _ in
             Gemma3nAudioConformerBlock(config: config)
         }
+        super.init()
     }
     
     public func callAsFunction(
@@ -865,17 +877,16 @@ public class Gemma3nAudioModel: Module {
         var sanitizedWeights: [String: MLXArray] = [:]
         
         for (k, v) in weights {
+            if !k.starts(with: "audio_tower") {
+                sanitizedWeights[k] = v
+                continue
+            }
+            print("Key: \(k), Shape: \(v.shape)")
             if k.contains("conv.weight") {
                 if checkArrayShape(v) {
                     sanitizedWeights[k] = v
                 } else {
                     sanitizedWeights[k] = v.transposed(0, 2, 3, 1)
-                }
-            } else if k.contains("conv1d.weight") {
-                if checkArrayShape(v) {
-                    sanitizedWeights[k] = v
-                } else {
-                    sanitizedWeights[k] = v.transposed(0, 2, 1)
                 }
             } else {
                 sanitizedWeights[k] = v

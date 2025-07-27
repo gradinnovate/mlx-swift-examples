@@ -409,27 +409,7 @@ public class Gemma3n: Module, VLMModel, KVCacheDimensionProvider {
     }
     
     public func sanitize(weights: [String: MLXArray]) -> [String: MLXArray] {
-        var sanitizedWeights: [String: MLXArray] = [:]
-        
-        for (k, v) in weights {
-            if k.starts(with: "model.") {
-                let newKey = String(k.dropFirst(6))  // Remove "model." prefix
-                sanitizedWeights[newKey] = v
-            } else {
-                sanitizedWeights[k] = v
-            }
-        }
-        
-        // Apply language model sanitization
-        sanitizedWeights = languageModel.sanitize(weights: sanitizedWeights)
-        
-        // Apply vision tower sanitization
-        sanitizedWeights = visionTower.sanitize(weights: sanitizedWeights)
-        
-        // Apply audio tower sanitization  
-        sanitizedWeights = audioTower.sanitize(weights: sanitizedWeights)
-        
-        return sanitizedWeights
+        return weights
     }
     
     public var layers: [Module] {
@@ -487,7 +467,7 @@ public class Gemma3nProcessor: UserInputProcessor {
             
             // Expand image tokens
             let startOfImageTokenId = 255999
-            let imageTokenId = config.imageTokenId
+            let imageTokenId = config.imageTokenId ?? 262145
             let numImageTokens = config.imageSeqLength
             
             var expandedTokens: [Int] = []
@@ -530,7 +510,7 @@ public struct Gemma3nProcessorConfiguration: Codable, Sendable {
     public let panAndScanMaxNumCrops: Int?
     public let panAndScanMinCropSize: Int?
     public let panAndScanMinRatioToActivate: Float?
-    public let imageTokenId: Int
+    public let imageTokenId: Int?
     
     public struct ImageSize: Codable, Sendable {
         public let height: Int
@@ -569,7 +549,7 @@ public struct Gemma3nProcessorConfiguration: Codable, Sendable {
         panAndScanMaxNumCrops: Int? = nil,
         panAndScanMinCropSize: Int? = nil,
         panAndScanMinRatioToActivate: Float? = nil,
-        imageTokenId: Int = 262145
+        imageTokenId: Int? = 262145
     ) {
         self.processorClass = processorClass
         self.imageProcessorType = imageProcessorType
