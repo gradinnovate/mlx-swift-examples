@@ -24,6 +24,28 @@ Available command-line tools:
 - `mnist-tool` - Train LeNet on MNIST dataset
 - `ExampleLLM` - Simplified API example for LLM interaction
 
+#### Testing Gemma3n Vision-Language Model
+For testing the newly implemented Gemma3n VLM model:
+```bash
+# Test with local model directory
+./mlx-run llm-tool --model /path/to/gemma-3n-model --prompt "Describe this image" --image /path/to/image.jpg
+
+# Test with Hugging Face model (if available)
+./mlx-run llm-tool --model mlx-community/gemma-3n-4bit --prompt "Hello, how are you?"
+
+# Test audio capabilities (if model supports audio)
+./mlx-run llm-tool --model /path/to/gemma-3n-model --prompt "Transcribe this audio" --audio /path/to/audio.wav
+```
+
+Common debugging commands:
+```bash
+# Debug mode for more verbose output
+./mlx-run --debug llm-tool --model /path/to/model --prompt "test"
+
+# Check model configuration loading
+./mlx-run llm-tool --model /path/to/model --list-config
+```
+
 ### Code Formatting
 - `swift-format format --in-place --recursive Libraries Tools Applications` - Format all code
 - `pre-commit run --all-files` - Run all pre-commit hooks including formatting
@@ -769,3 +791,133 @@ let localShapes = model.filterMap(
 ```
 
 This mapping guide focuses specifically on the neural network layers and components used in the Gemma3n model implementation, providing accurate Swift MLX equivalents based on the official documentation.
+
+---
+
+# Gemma3n Model Testing and Debugging Guide
+
+## Quick Start Testing
+
+### 1. Basic Text Generation Test
+```bash
+./mlx-run llm-tool --model /Users/magi/Workspace/mlx-llm/gemma-3n-E2B-4bit --prompt "Hello, how are you?"
+```
+
+### 2. Vision-Language Test (with image)
+```bash
+./mlx-run llm-tool --model /Users/magi/Workspace/mlx-llm/gemma-3n-E2B-4bit --prompt "Describe this image" --image /path/to/image.jpg
+```
+
+### 3. Audio Processing Test (if supported)
+```bash
+./mlx-run llm-tool --model /Users/magi/Workspace/mlx-llm/gemma-3n-E2B-4bit --prompt "What do you hear?" --audio /path/to/audio.wav
+```
+
+## Common Runtime Errors and Solutions
+
+### 1. "Unsupported model type: gemma3n"
+**Problem**: Model type not recognized by factory system
+**Solutions**:
+- Check that `VLMTypeRegistry` includes `"gemma3n"` mapping in `VLMModelFactory.swift`
+- Verify `config.json` has correct `model_type: "gemma3n"`
+- Ensure all imports are correct in the registry file
+
+### 2. Configuration Loading Errors
+**Problem**: Model configuration parsing fails
+**Debug steps**:
+```bash
+# Check configuration file structure
+cat /path/to/model/config.json | head -20
+
+# Verify processor configuration exists
+ls -la /path/to/model/preprocessor_config.json
+
+# Test with debug mode
+./mlx-run --debug llm-tool --model /path/to/model --prompt "test"
+```
+
+### 3. Weight Loading Issues
+**Problem**: Model weights fail to load properly
+**Debug approach**:
+- Check if all required weight files exist
+- Verify weight tensor shapes match model architecture
+- Check for quantization compatibility
+
+### 4. Memory Issues
+**Problem**: Out of memory during model loading
+**Solutions**:
+- Use quantized model (4-bit recommended)
+- Reduce context length if possible
+- Monitor memory usage during loading
+
+## Debugging Workflow
+
+### Step 1: Verify Model Registration
+```bash
+# Check if model type is registered
+grep -r "gemma3n" Libraries/MLXVLM/VLMModelFactory.swift
+```
+
+### Step 2: Test Configuration Loading
+```bash
+# Check model configuration structure
+python3 -c "
+import json
+with open('/path/to/model/config.json', 'r') as f:
+    config = json.load(f)
+    print('Model Type:', config.get('model_type'))
+    print('Has Vision Config:', 'vision_config' in config)
+    print('Has Audio Config:', 'audio_config' in config)
+    print('Has Text Config:', 'text_config' in config)
+"
+```
+
+### Step 3: Enable Debug Mode
+```bash
+# Run with maximum verbosity
+./mlx-run --debug llm-tool --model /path/to/model --prompt "test" 2>&1 | tee debug.log
+```
+
+### Step 4: Check Dependencies
+Ensure all required files are present:
+- `config.json` - Main model configuration
+- `preprocessor_config.json` - Input processor configuration  
+- `tokenizer.json` - Tokenizer configuration
+- Weight files (`.safetensors` or `.npz`)
+
+## Performance Optimization
+
+### For Development/Testing
+```bash
+# Use debug mode for detailed error messages
+./mlx-run --debug llm-tool --model /path/to/model --prompt "test"
+```
+
+### For Production
+```bash
+# Use release mode for optimal performance
+./mlx-run --release llm-tool --model /path/to/model --prompt "test"
+```
+
+## Troubleshooting Checklist
+
+- [ ] Model directory contains all required files
+- [ ] `config.json` has `model_type: "gemma3n"`
+- [ ] `preprocessor_config.json` has correct processor class
+- [ ] All imports in source files are correct
+- [ ] Model classes are properly registered in factory
+- [ ] Access levels (public/private) are correctly set
+- [ ] Property wrapper initialization follows correct pattern
+
+## Logging and Diagnostics
+
+Add these debug prints to troubleshoot specific issues:
+
+```swift
+// In model initialization
+print("Loading Gemma3n with config: \(config)")
+print("Model type: \(config.modelType)")
+print("Text config loaded: \(config.textConfig)")
+print("Vision config loaded: \(config.visionConfig)")
+print("Audio config loaded: \(config.audioConfig)")
+```

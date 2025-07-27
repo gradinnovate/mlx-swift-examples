@@ -97,3 +97,4 @@ iOSInjectionProject/
 .build/
 .claude/
 .swiftpm/
+.tmp/
