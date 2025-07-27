@@ -15,7 +15,7 @@ This fork has been extensively tested and optimized for the [`mlx-community/gemm
 
 ### Text Generation
 ```bash
-./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "Hello, how are you?"
+./mlx-run llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "Hello, how are you?" --vlm
 ```
 
 ### Vision-Language Generation
