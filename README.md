@@ -69,10 +69,10 @@ This fork has been specifically tested and optimized for:
 ### Building and Running
 ```bash
 # Build and run with debug output
-./mlx-run --debug llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "how are you?" --vlm
+./mlx-run --debug llm-tool --model mlx-community/gemma-3n-E2B-it-4bit --prompt "how are you?" --vlm
 
 # Build and run in release mode for best performance  
-./mlx-run --release llm-tool --model mlx-community/gemma-3n-E2B-4bit --prompt "how are you?" --vlm
+./mlx-run --release llm-tool --model mlx-community/gemma-3n-E2B-it-4bit --prompt "how are you?" --vlm
 
 
 ```
@@ -91,5 +91,5 @@ This project maintains the same license as the original MLX Swift Examples repos
 
 - **Original Repository**: [ml-explore/mlx-swift-examples](https://github.com/ml-explore/mlx-swift-examples)
 - **MLX Swift**: [ml-explore/mlx-swift](https://github.com/ml-explore/mlx-swift)
-- **Gemma-3n Model**: [mlx-community/gemma-3n-E2B-4bit](https://huggingface.co/mlx-community/gemma-3n-E2B-4bit)
+- **Gemma-3n Model**: [mlx-community/gemma-3n-E2B-it-4bit](https://huggingface.co/mlx-community/gemma-3n-E2B-it-4bit)
 - **MLX Framework**: [ml-explore/mlx](https://github.com/ml-explore/mlx)
