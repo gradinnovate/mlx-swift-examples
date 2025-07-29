@@ -785,16 +785,7 @@ public class Gemma3nLanguageModel: Module, KVCacheDimensionProvider {
     }
 }
 
-//TODO: use helper functions from KVCache implementation
-// Helper function to create attention mask
+// Helper function to create attention mask using MLXLMCommon implementation
 private func createAttentionMask(h: MLXArray, cache: [KVCache]) -> MLXArray? {
-    // Implementation should create appropriate causal mask
-    // This is a simplified version - actual implementation may need more sophistication
-    let seqLength = h.shape[1]
-    return createCausalMask(seqLength)
-}
-
-private func createCausalMask(_ seqLength: Int) -> MLXArray {
-    let mask = tril(ones([seqLength, seqLength])) 
-    return MLX.where(equal(mask, 0), MLXArray(Float.infinity * -1), MLXArray(0))
+    return MLXLMCommon.createAttentionMask(h: h, cache: cache)
 }
