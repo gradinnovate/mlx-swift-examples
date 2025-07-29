@@ -348,11 +348,14 @@ public class Gemma3nAltUp: Module {
         
         // Apply prediction coefficients using Linear layer (not direct matmul)
         let allCoefsFlat = predictionCoefs(modalities)
+        
+        // Use modalities.shape[:-1] pattern from Python version
+        let modalityBatchDims = Array(modalities.shape.dropLast())
+        var reshapeSize = modalityBatchDims + [config.altupNumInputs, config.altupNumInputs]
+        
+        // Python does .transpose(0, 1, 3, 2) to swap last two dimensions
         let allCoefs = allCoefsFlat
-            .reshaped(
-                modalities.shape[0], modalities.shape[1],
-                config.altupNumInputs, config.altupNumInputs
-            )
+            .reshaped(reshapeSize)
             .transposed(0, 1, 3, 2)
         
         let xUp = x.asType(.float32)

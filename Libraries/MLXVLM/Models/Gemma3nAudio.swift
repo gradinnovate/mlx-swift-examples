@@ -136,13 +136,16 @@ private class Gemma3nAudioRelativePositionEmbedding: Module {
         
         // Query-Position interaction
         let qTransposed = queries.transposed(0, 3, 1, 2, 4)
-        let sTransposed = sinEmb.transposed(1, 2, 0)
+        let sTransposed = sinEmb.transposed(1, 2, 0)  // [N, H, F]
         
         let qReshaped = qTransposed.reshaped([
             batchSize, numHeads, numQueryBlocks * queryBlockSize, headDim
         ])
         
-        let termBdUnshifedMatmul = matmul(qReshaped, sTransposed)
+        // Broadcast sTransposed to match batch dimension: [N, H, F] -> [B, N, H, F]
+        let sTransposedBatched = broadcast(sTransposed.expandedDimensions(axis: 0), to: [batchSize, numHeads, headDim, maxSpanPlus1])
+        
+        let termBdUnshifedMatmul = matmul(qReshaped, sTransposedBatched)
         
         let termBdUnshifed = termBdUnshifedMatmul.reshaped([
             batchSize, numHeads, numQueryBlocks, queryBlockSize, maxSpanPlus1
