@@ -211,10 +211,9 @@ public class Gemma3nAttention: Module {
         queries = rope(queries, offset: offset)
         
         var finalMask = mask
-        if let maskArray = mask, maskArray.shape.last! != keys.shape[2] {
-            let keyLen = keys.shape[2]
-            let slicedMask = maskArray[.ellipsis, (-keyLen)...]
-            finalMask = slicedMask
+        if let maskArray = mask, maskArray.shape.last! != keys.shape[keys.shape.count - 2] {
+            let keyLen = keys.shape[keys.shape.count - 2]
+            finalMask = maskArray[.ellipsis, 0..<keyLen]
         }
         
         let output = MLXFast.scaledDotProductAttention(
